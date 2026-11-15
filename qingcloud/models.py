@@ -47,6 +47,12 @@ class WorkerRecord(WorkerRegistration):
     last_seen_at: datetime = Field(default_factory=utcnow)
 
 
+class DistributedSumCreate(BaseModel):
+    start: int
+    end: int
+    chunk_size: int = Field(default=1000, ge=1, le=10000)
+
+
 class JobCreate(BaseModel):
     kind: str = Field(default="diagnostic", min_length=1, max_length=80)
     payload: dict[str, Any] = Field(default_factory=dict)
@@ -57,6 +63,7 @@ class JobCreate(BaseModel):
 
 class JobRecord(JobCreate):
     job_id: str
+    task_id: str | None = None
     state: JobState = JobState.queued
     assigned_worker_id: str | None = None
     attempts: int = 0
