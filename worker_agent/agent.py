@@ -2,6 +2,7 @@ from __future__ import annotations
 import argparse, csv, json, os, platform, subprocess, sys, time, urllib.error, urllib.request
 from pathlib import Path
 from typing import Any
+import psutil
 
 from worker_agent.runtime import execute_safe_job
 
@@ -78,6 +79,22 @@ def detect_gpus() -> list[dict[str, Any]]:
             pass
     return devices
 
+def resource_snapshot() -> dict[str, Any]:
+    """Sample host CPU, RAM and currently detectable GPU pressure."""
+    memory = psutil.virtual_memory()
+    return {
+        "cpu_percent": round(float(psutil.cpu_percent(interval=0.1)), 1),
+        "ram_total_mb": int(memory.total / (1024 * 1024)),
+        "ram_used_mb": int(memory.used / (1024 * 1024)),
+        "ram_available_mb": int(memory.available / (1024 * 1024)),
+        "ram_percent": round(float(memory.percent), 1),
+        "gpus": [
+            {key: gpu[key] for key in ("device_index", "name", "utilization_percent", "vram_mb", "free_vram_mb") if key in gpu}
+            for gpu in detect_gpus()
+        ],
+    }
+
+
 def discover_worker(name: str | None = None) -> dict[str, Any]:
     return {
         "name": name or platform.node() or "qingcloud-worker",
@@ -132,6 +149,12 @@ def send_capabilities(base_url: str, config: dict[str, str]) -> dict[str, Any]:
         payload=discover_worker(),
         headers={"X-QingCloud-Worker-Token": config["access_token"]})
 
+def send_telemetry(base_url: str, config: dict[str, str]) -> dict[str, Any]:
+    return request_json(base_url, "/v1/workers/" + config["worker_id"] + "/telemetry", "POST",
+        payload=resource_snapshot(),
+        headers={"X-QingCloud-Worker-Token": config["access_token"]})
+
+
 def send_heartbeat(base_url: str, config: dict[str, str]) -> dict[str, Any]:
     return request_json(base_url, "/v1/workers/" + config["worker_id"] + "/heartbeat", "POST",
         headers={"X-QingCloud-Worker-Token": config["access_token"]})
@@ -174,11 +197,14 @@ def run_agent(base_url: str, config_path: Path, interval: int, once: bool = Fals
     config = load_or_enroll(base_url, config_path, enrollment_token)
     while True:
         inventory = send_capabilities(base_url, config)
+        telemetry = send_telemetry(base_url, config)
         result = send_heartbeat(base_url, config)
         print(json.dumps({
             "heartbeat": "ok",
             "worker_id": config["worker_id"],
             "gpu_count": len(inventory.get("gpus", [])),
+            "cpu_percent": telemetry.get("cpu_percent"),
+            "ram_percent": telemetry.get("ram_percent"),
             "last_seen_at": result.get("last_seen_at"),
         }))
         if enable_jobs:
