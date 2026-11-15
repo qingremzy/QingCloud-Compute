@@ -14,6 +14,7 @@ from qingcloud.models import (
     WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration, WorkerState,
 )
 from qingcloud.scheduler import recover_expired_jobs
+from qingcloud.gpu_health import assess_worker_gpu_health
 from qingcloud.security import (
     hash_worker_token, issue_worker_token, require_worker_token,
     verify_enrollment_token, verify_admin_token,
@@ -93,6 +94,8 @@ def dashboard(admin_token: str | None = Header(default=None, alias="X-QingCloud-
         worker_rows.append({
             "worker_id": worker.worker_id, "name": worker.name, "hostname": worker.hostname,
             "os": worker.os, "state": worker.state.value, "last_seen_at": worker.last_seen_at,
+            "capabilities_updated_at": worker.capabilities_updated_at,
+            "gpu_health": assess_worker_gpu_health(worker, now()),
             "cpu_cores": worker.cpu_cores, "ram_mb": worker.ram_mb,
             "gpus": [gpu.model_dump() for gpu in worker.gpus], "running_jobs": len(running),
         })
@@ -166,6 +169,7 @@ def update_worker_capabilities(
     for field in WorkerRegistration.model_fields:
         setattr(worker, field, getattr(normalized, field))
     worker.last_seen_at = now()
+    worker.capabilities_updated_at = worker.last_seen_at
     worker.state = WorkerState.online
     save_worker(worker)
     return worker
