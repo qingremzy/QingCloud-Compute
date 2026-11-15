@@ -49,6 +49,7 @@ class WorkerRecord(WorkerRegistration):
     state: WorkerState = WorkerState.online
     registered_at: datetime = Field(default_factory=utcnow)
     last_seen_at: datetime = Field(default_factory=utcnow)
+    capabilities_updated_at: datetime = Field(default_factory=utcnow)
 
 
 class DistributedSumCreate(BaseModel):
