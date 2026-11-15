@@ -55,7 +55,7 @@ On Windows PowerShell, set QCLOUD_URL and QCLOUD_ENROLLMENT_TOKEN using the $env
 
 The safe runtime supports diagnostic, echo (2,000-character limit), SHA-256 (10,000-character limit), and sum_range chunks (at most 10,000 integers per chunk). The distributed-sum API has an automated two-worker identity test that verifies distinct chunk assignment and final aggregation. This validates coordinator behavior in tests, not execution across two real physical machines. Failed attempts are requeued up to each job's max_attempts setting. A worker that stops renewing its job lease is treated as abandoned after 180 seconds, and the job is requeued or marked failed when another worker claims work. Submit `POST /v1/distributed/sum` with `start`, `end`, and optional `chunk_size` (maximum 10,000) to split an inclusive integer range into independently schedulable CPU jobs. Each job is assigned a task ID. Poll `GET /v1/distributed/sum/{task_id}` for progress and the final total. The coordinator verifies each returned chunk's boundaries, count, and arithmetic before accepting its partial sum. The whole task is limited to 1,000,000 integers and 100 chunks. Unknown job kinds are rejected. The worker never runs shell commands or evaluates submitted payloads. Job execution is disabled unless --enable-jobs is supplied. By default, the agent processes one job per heartbeat cycle. Set --max-jobs-per-cycle to a value from 1 to 16 to process a bounded batch before the next heartbeat.
 
-NVIDIA inventory is read through nvidia-smi. AMD ROCm product-name detection is best-effort and reports VRAM as unknown (0 MB) until reliable platform-specific parsing is added.
+NVIDIA inventory is read through nvidia-smi and includes total/free VRAM, utilization, driver version, and compute capability when the driver reports them. GPU jobs use reported free VRAM when available, falling back to total VRAM only when free-memory telemetry is unknown. AMD ROCm product-name detection remains best-effort and reports VRAM/utilization as unknown until reliable platform-specific parsing is added.
 
 ## Safety and limitations
 
@@ -73,7 +73,7 @@ SQLite persistence is local to the machine running the control plane. It does no
 - [x] Worker agent for hardware discovery and authenticated heartbeat (no job execution)
 - [x] Opt-in worker runtime for bounded built-in diagnostic jobs
 - [ ] Secure, sandboxed worker runtime for third-party workloads
-- [x] Initial NVIDIA GPU capability probing and authenticated inventory refresh
+- [x] Initial NVIDIA GPU capability probing and authenticated inventory refresh\n- [x] NVIDIA free-VRAM and utilization telemetry with free-memory-aware scheduling
 - [ ] Broader GPU capability probing (ROCm/Metal and richer telemetry)
 - [x] Distributed CPU sum prototype: split ranges into jobs and verify/aggregate chunk results\n- [x] Multi-worker chunk assignment and aggregation covered by automated coordinator tests\n- [ ] Demonstrate real workers on separate physical machines and improve multi-worker throughput
 - [ ] Shared storage backend\n- [x] Admin-authenticated network operations dashboard API
