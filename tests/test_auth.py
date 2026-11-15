@@ -1,8 +1,10 @@
 import pytest
+from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 
 from qingcloud.main import app, workers, jobs, worker_token_hashes
-from qingcloud.db import clear_all
+from qingcloud.db import clear_all, invitation_token_hash_exists, create_worker_invitation
+from qingcloud.security import hash_worker_token
 
 client = TestClient(app)
 
@@ -424,3 +426,61 @@ def test_fresh_heartbeat_returns_offline_provider_to_online_registry():
     assert heartbeat.status_code == 200
     registry = client.get("/v1/providers", headers={"X-QingCloud-Admin-Token": "test-admin-secret"})
     assert registry.json()["online"] == 1
+
+ 
+
+def test_invitation_creation_requires_admin_token():
+    assert client.post("/v1/invitations", json={"expires_in_hours": 24}).status_code == 401
+    response = client.post(
+        "/v1/invitations",
+        headers={"X-QingCloud-Admin-Token": "test-admin-secret"},
+        json={"expires_in_hours": 24},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["invitation_token"]
+    assert body["expires_in_hours"] == 24
+    assert invitation_token_hash_exists(hash_worker_token(body["invitation_token"]))
+
+
+def test_invitation_enrolls_one_worker_and_cannot_be_reused():
+    created = client.post(
+        "/v1/invitations",
+        headers={"X-QingCloud-Admin-Token": "test-admin-secret"},
+        json={"expires_in_hours": 24},
+    )
+    invitation = created.json()["invitation_token"]
+    registration = client.post(
+        "/v1/workers/register",
+        headers={"X-QingCloud-Invitation-Token": invitation},
+        json={"name": "invited-worker", "cpu_cores": 2, "ram_mb": 4096},
+    )
+    assert registration.status_code == 200
+    assert registration.json()["worker"]["name"] == "invited-worker"
+    assert registration.json()["access_token"]
+    reused = client.post(
+        "/v1/workers/register",
+        headers={"X-QingCloud-Invitation-Token": invitation},
+        json={"name": "second-worker"},
+    )
+    assert reused.status_code == 401
+
+
+def test_expired_invitation_is_rejected():
+    expired = "expired-invitation-for-test"
+    create_worker_invitation(
+        hash_worker_token(expired),
+        datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    response = client.post(
+        "/v1/workers/register",
+        headers={"X-QingCloud-Invitation-Token": expired},
+        json={"name": "too-late-worker"},
+    )
+    assert response.status_code == 401
+
+
+def test_invitation_expiry_is_bounded():
+    headers = {"X-QingCloud-Admin-Token": "test-admin-secret"}
+    assert client.post("/v1/invitations", headers=headers, json={"expires_in_hours": 0}).status_code == 422
+    assert client.post("/v1/invitations", headers=headers, json={"expires_in_hours": 169}).status_code == 422
