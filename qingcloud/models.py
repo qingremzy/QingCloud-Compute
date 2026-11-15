@@ -76,3 +76,9 @@ class JobCompletion(BaseModel):
     success: bool
     result: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
+
+
+class WorkerEnrollmentResponse(BaseModel):
+    worker: WorkerRecord
+    access_token: str
+    token_type: str = "Bearer"
