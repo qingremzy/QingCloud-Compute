@@ -59,7 +59,7 @@ NVIDIA inventory is read through nvidia-smi and includes total/free VRAM, utiliz
 
 ## GPU provider health monitoring
 
-The dashboard API reports each worker GPU inventory with capability-report age and status (`healthy`, `stale`, `offline`, or `no_gpu`). It flags free VRAM at or below 10% of reported total and utilization at or above 90%. These are operational warning heuristics, not proof of hardware failure. Missing AMD telemetry is shown as unknown rather than guessed. Capability freshness is based on the last authenticated hardware refresh, not a live out-of-band GPU probe.
+The admin-only `GET /v1/workers/{worker_id}/gpu-history` endpoint returns persisted GPU hardware inventory changes, including initial inventory, additions, removals, and other hardware/driver changes. The history intentionally excludes fluctuating free VRAM and utilization readings. The dashboard API reports each worker GPU inventory with capability-report age and status (`healthy`, `stale`, `offline`, or `no_gpu`). It flags free VRAM at or below 10% of reported total and utilization at or above 90%. These are operational warning heuristics, not proof of hardware failure. Missing AMD telemetry is shown as unknown rather than guessed. Capability freshness is based on the last authenticated hardware refresh, not a live out-of-band GPU probe.
 
 ## Safety and limitations
 
@@ -79,6 +79,7 @@ SQLite persistence is local to the machine running the control plane. It does no
 - [ ] Secure, sandboxed worker runtime for third-party workloads
 - [x] Initial NVIDIA GPU capability probing and authenticated inventory refresh\n- [x] NVIDIA free-VRAM and utilization telemetry with free-memory-aware scheduling
 - [x] GPU provider health assessment in admin dashboard API
+- [x] Persistent GPU hardware inventory change history
 - [ ] Broader GPU capability probing (ROCm/Metal and richer telemetry)
 - [x] Distributed CPU sum prototype: split ranges into jobs and verify/aggregate chunk results\n- [x] Multi-worker chunk assignment and aggregation covered by automated coordinator tests\n- [ ] Demonstrate real workers on separate physical machines and improve multi-worker throughput
 - [ ] Shared storage backend\n- [x] Admin-authenticated network operations dashboard API
