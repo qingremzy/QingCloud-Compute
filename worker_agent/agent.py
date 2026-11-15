@@ -108,12 +108,28 @@ def check_job_resources(job: dict[str, Any], snapshot: dict[str, Any] | None = N
         return f"Local available RAM is below the job requirement ({required_ram} MB required)."
     if required_gpu:
         devices = current.get("gpus") or []
+        assigned_index = job.get("assigned_gpu_index")
+        if assigned_index is not None:
+            devices = [device for device in devices if device.get("device_index") == assigned_index]
+            if not devices:
+                return f"Coordinator-assigned GPU index {assigned_index} is not present on this worker."
         if not any(int(device.get("free_vram_mb") or 0) >= required_gpu for device in devices):
-            return f"No locally detected GPU has {required_gpu} MB of reported free VRAM."
+            return f"No locally detected assigned GPU has {required_gpu} MB of reported free VRAM."
     return None
 
 
+def cuda_torch_available() -> bool:
+    try:
+        import torch
+        return bool(torch.cuda.is_available())
+    except (ImportError, OSError):
+        return False
+
+
 def discover_worker(name: str | None = None) -> dict[str, Any]:
+    labels = {"agent": "qingcloud-worker-agent", "agent_version": "0.2.0"}
+    if cuda_torch_available():
+        labels["gpu_execution"] = "cuda_torch"
     return {
         "name": name or platform.node() or "qingcloud-worker",
         "hostname": platform.node() or None,
@@ -122,7 +138,7 @@ def discover_worker(name: str | None = None) -> dict[str, Any]:
         "cpu_cores": os.cpu_count() or 1,
         "ram_mb": memory_mb(),
         "gpus": detect_gpus(),
-        "labels": {"agent": "qingcloud-worker-agent", "agent_version": "0.1.0"},
+        "labels": labels,
     }
 
 def request_json(base_url: str, path: str, method: str = "GET", payload: dict[str, Any] | None = None,
@@ -204,7 +220,17 @@ def claim_one_job(base_url: str, config: dict[str, str]) -> bool:
             "POST", payload={"reason": resource_error}, headers=headers)
         print(json.dumps({"job_id": job_id, "job_kind": job.get("kind"), "declined": True, "reason": resource_error}))
         return False
-    success, result, error = execute_safe_job(job.get("kind", ""), job.get("payload") or {})
+    payload = dict(job.get("payload") or {})
+    if job.get("kind") == "gpu_matrix_multiply":
+        if not int(job.get("required_gpu_vram_mb", 0) or 0):
+            success, result, error = False, {}, "GPU matrix workload must declare required_gpu_vram_mb."
+        elif job.get("assigned_gpu_index") is None:
+            success, result, error = False, {}, "Coordinator did not assign a physical GPU index."
+        else:
+            payload["device_index"] = int(job["assigned_gpu_index"])
+            success, result, error = execute_safe_job(job.get("kind", ""), payload)
+    else:
+        success, result, error = execute_safe_job(job.get("kind", ""), payload)
     request_json(base_url, "/v1/jobs/" + job_id + "/complete?worker_id=" + worker_id + "&attempt=" + str(attempt),
         "POST", payload={"success": success, "result": result, "error": error}, headers=headers)
     print(json.dumps({"job_id": job_id, "job_kind": job.get("kind"), "success": success, "error": error}))
