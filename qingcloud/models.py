@@ -93,10 +93,12 @@ class DistributedSumCreate(BaseModel):
     start: int
     end: int
     chunk_size: int = Field(default=1000, ge=1, le=10000)
+    source: str = Field(default="api", min_length=1, max_length=80)
 
 
 class JobCreate(BaseModel):
     kind: str = Field(default="diagnostic", min_length=1, max_length=80)
+    source: str = Field(default="api", min_length=1, max_length=80)
     payload: dict[str, Any] = Field(default_factory=dict)
     required_gpu_vram_mb: int = Field(default=0, ge=0)
     required_cpu_cores: int = Field(default=0, ge=0, le=256)
