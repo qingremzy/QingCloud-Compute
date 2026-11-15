@@ -637,6 +637,11 @@ def test_gpu_vram_is_reserved_per_device_until_job_finishes():
     worker_id, token = enroll("gpu-reservation-worker")
     headers = {"X-QingCloud-Worker-Token": token}
     admin = {"X-QingCloud-Admin-Token": "test-admin-secret"}
+    capacity = client.put(
+        f"/v1/workers/{worker_id}/capacity", headers=admin,
+        json={"max_concurrent_jobs": 3},
+    )
+    assert capacity.status_code == 200
     refreshed = client.put(
         f"/v1/workers/{worker_id}/capabilities",
         headers=headers,
