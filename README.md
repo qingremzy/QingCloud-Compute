@@ -188,3 +188,8 @@ YTAgent's server-side client uses:
 The YTAgent API wraps these as authenticated `GET /api/compute/status`, `POST /api/compute/test`, and `GET /api/compute/tasks/{task_id}` routes. The test task defaults to summing 1–1,000 in chunks of 100. It is a real control-plane and distributed CPU integration test: it will remain queued until at least one online, approved worker runs the built-in worker agent with `--enable-jobs`.
 
 **Scope boundary:** this integration does not yet run YTAgent's Wan video generation, Kokoro narration, FFmpeg compiler, or GPU inference on QingCloud. The existing YTAgent Kaggle GPU worker remains separate. A dedicated GPU workload adapter, media transfer protocol, sandbox, and real-hardware validation are still required before video-generation offload can be claimed.
+
+
+### Job source attribution
+
+Jobs carry a short `source` label (default `api`) so an integrated application can identify its own workloads in the admin dashboard. Distributed tasks preserve that source label on every chunk and in task status. This field is descriptive metadata, not an authorization boundary. YTAgent submits its first distributed CPU verification task with `source="ytagent"`.
