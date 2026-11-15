@@ -146,7 +146,7 @@ def dashboard(admin_token: str | None = Header(default=None, alias="X-QingCloud-
         "reserved_gpu_vram_mb": job.reserved_gpu_vram_mb, "required_gpu_vram_mb": job.required_gpu_vram_mb,
         "required_cpu_cores": job.required_cpu_cores, "required_ram_mb": job.required_ram_mb,
         "reserved_cpu_cores": job.reserved_cpu_cores, "reserved_ram_mb": job.reserved_ram_mb,
-        "attempts": job.attempts,
+        "attempts": job.attempts, "declined_attempts": job.declined_attempts,
         "max_attempts": job.max_attempts, "progress": job.progress,
         "created_at": job.created_at, "updated_at": job.updated_at, "error": job.error,
     } for job in jobs.values()]
