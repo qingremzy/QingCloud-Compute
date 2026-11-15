@@ -192,21 +192,33 @@ def test_two_workers_claim_distinct_chunks_and_complete_distributed_sum():
     worker_b, token_b = enroll("worker-b")
     task = client.post(
         "/v1/distributed/sum",
-            headers={"X-QingCloud-Admin-Token": "test-admin-secret"},
+        headers={"X-QingCloud-Admin-Token": "test-admin-secret"},
         json={"start": 1, "end": 12, "chunk_size": 3},
     ).json()
+
+    # Intelligent scheduling may correctly return no job to a worker that is
+    # not currently the highest-ranked candidate. Both workers poll until all
+    # chunks are claimed instead of assuming strict A/B alternation.
     claims = []
-    for worker_id, token in ((worker_a, token_a), (worker_b, token_b),
-                             (worker_a, token_a), (worker_b, token_b)):
-        response = client.post(
-            f"/v1/workers/{worker_id}/claim",
-            headers={"X-QingCloud-Worker-Token": token},
-        )
-        assert response.status_code == 200
-        claimed = response.json()
-        assert claimed is not None
-        claims.append((worker_id, token, claimed))
+    worker_credentials = ((worker_a, token_a), (worker_b, token_b))
+    for _ in range(8):
+        if len(claims) == 4:
+            break
+        for worker_id, token in worker_credentials:
+            if len(claims) == 4:
+                break
+            response = client.post(
+                f"/v1/workers/{worker_id}/claim",
+                headers={"X-QingCloud-Worker-Token": token},
+            )
+            assert response.status_code == 200
+            claimed = response.json()
+            if claimed is not None:
+                claims.append((worker_id, token, claimed))
+
+    assert len(claims) == 4
     assert len({item[2]["job_id"] for item in claims}) == 4
+    assert {item[0] for item in claims} == {worker_a, worker_b}
 
     for worker_id, token, job in claims:
         start = job["payload"]["start"]
@@ -224,7 +236,10 @@ def test_two_workers_claim_distinct_chunks_and_complete_distributed_sum():
         )
         assert completed.status_code == 200
 
-    status = client.get(f"/v1/distributed/sum/{task['task_id']}", headers={"X-QingCloud-Admin-Token": "test-admin-secret"})
+    status = client.get(
+        f"/v1/distributed/sum/{task['task_id']}",
+        headers={"X-QingCloud-Admin-Token": "test-admin-secret"},
+    )
     assert status.json()["status"] == "succeeded"
     assert status.json()["total"] == 78
     assert status.json()["succeeded_chunks"] == 4
