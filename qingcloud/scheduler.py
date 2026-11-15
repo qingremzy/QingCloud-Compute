@@ -138,6 +138,8 @@ def recover_expired_jobs(jobs: dict[str, JobRecord], current_time: datetime | No
         job.assigned_worker_id = None
         job.assigned_gpu_index = None
         job.reserved_gpu_vram_mb = 0
+        job.reserved_cpu_cores = 0
+        job.reserved_ram_mb = 0
         job.progress = 0
         job.updated_at = current_time
         if job.attempts < job.max_attempts:
