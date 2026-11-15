@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import os
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException
 
+from qingcloud.db import init_db, load_state, save_job, save_worker, save_worker_token
 from qingcloud.models import (
     JobCompletion, JobCreate, JobHeartbeat, JobRecord,
     WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration,
@@ -18,13 +18,16 @@ from qingcloud.security import (
 
 app = FastAPI(
     title="QingCloud Compute",
-    version="0.2.0",
-    description="A $0-first distributed compute control-plane prototype.",
+    version="0.3.0",
+    description="A $0-first distributed compute control-plane prototype with SQLite persistence.",
 )
 
 workers: dict[str, WorkerRecord] = {}
 jobs: dict[str, JobRecord] = {}
 worker_token_hashes: dict[str, str] = {}
+
+init_db()
+load_state(workers, jobs, worker_token_hashes)
 
 
 def now():
@@ -54,6 +57,7 @@ def overview():
         "queued_jobs": sum(j.state.value == "queued" for j in jobs.values()),
         "running_jobs": sum(j.state.value == "running" for j in jobs.values()),
         "reported_gpu_vram_mb_across_network": gpu_vram_mb,
+        "storage": "sqlite",
         "note": "Aggregate VRAM is inventory only; it is not one unified GPU memory pool.",
     }
 
@@ -67,8 +71,11 @@ def register_worker(
     worker_id = str(uuid4())
     record = WorkerRecord(**data.model_dump(), worker_id=worker_id)
     access_token = issue_worker_token()
+    token_hash = hash_worker_token(access_token)
     workers[worker_id] = record
-    worker_token_hashes[worker_id] = hash_worker_token(access_token)
+    worker_token_hashes[worker_id] = token_hash
+    save_worker(record)
+    save_worker_token(worker_id, token_hash)
     return WorkerEnrollmentResponse(worker=record, access_token=access_token)
 
 
@@ -85,6 +92,7 @@ def worker_heartbeat(
     worker = authenticate_worker(worker_id, token)
     worker.last_seen_at = now()
     worker.state = "online"
+    save_worker(worker)
     return {"ok": True, "last_seen_at": worker.last_seen_at}
 
 
@@ -93,6 +101,7 @@ def submit_job(data: JobCreate):
     job_id = str(uuid4())
     record = JobRecord(**data.model_dump(), job_id=job_id)
     jobs[job_id] = record
+    save_job(record)
     return record
 
 
@@ -116,7 +125,11 @@ def worker_claim(
 ):
     worker = authenticate_worker(worker_id, token)
     worker.last_seen_at = now()
-    return claim_next_job(worker, jobs)
+    claimed = claim_next_job(worker, jobs)
+    save_worker(worker)
+    if claimed:
+        save_job(claimed)
+    return claimed
 
 
 @app.post("/v1/jobs/{job_id}/heartbeat")
@@ -134,6 +147,7 @@ def job_heartbeat(
         raise HTTPException(status_code=403, detail="Job is not assigned to this worker")
     job.progress = data.progress
     job.updated_at = now()
+    save_job(job)
     return {"ok": True, "progress": job.progress, "message": data.message}
 
 
@@ -155,4 +169,5 @@ def complete_job(
     job.error = data.error if not data.success else None
     job.progress = 100 if data.success else job.progress
     job.updated_at = now()
+    save_job(job)
     return job
