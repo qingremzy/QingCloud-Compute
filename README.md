@@ -31,7 +31,7 @@ The SQLite database defaults to `qingcloud.sqlite3` in the working directory. Se
 
 Open the interactive API docs at `http://127.0.0.1:8000/docs`.
 
-## Coordinator administration\n\nJob submission and job/task inspection require the `X-QingCloud-Admin-Token` header matching `QCLOUD_ADMIN_TOKEN`. The API fails closed with HTTP 503 if the variable is not configured and rejects missing or incorrect tokens. Keep this token only in the coordinator environment and trusted admin clients. The read-only `GET /v1/dashboard` endpoint returns worker hardware inventory, worker status and last-seen timestamps, running-job counts, safe job status summaries, distributed-task chunk counts, and the overview. It deliberately omits job payloads and result contents. Worker enrollment and worker operations continue using their separate enrollment and per-worker tokens.\n\n## Worker enrollment
+## Coordinator administration\n\nJob submission and job/task inspection require the `X-QingCloud-Admin-Token` header matching `QCLOUD_ADMIN_TOKEN`. The API fails closed with HTTP 503 if the variable is not configured and rejects missing or incorrect tokens. Keep this token only in the coordinator environment and trusted admin clients. The read-only `GET /v1/dashboard` endpoint returns worker hardware inventory, worker status and last-seen timestamps, capability-refresh timestamps, GPU health assessments, running-job counts, safe job status summaries, distributed-task chunk counts, and the overview. It deliberately omits job payloads and result contents. Worker enrollment and worker operations continue using their separate enrollment and per-worker tokens.\n\n## Worker enrollment
 
 1. Send `POST /v1/workers/register` with the `X-QingCloud-Enrollment-Token` header.
 2. Save the returned `access_token` securely. It is shown only at enrollment.
@@ -57,6 +57,10 @@ The safe runtime supports diagnostic, echo (2,000-character limit), SHA-256 (10,
 
 NVIDIA inventory is read through nvidia-smi and includes total/free VRAM, utilization, driver version, and compute capability when the driver reports them. GPU jobs use reported free VRAM when available, falling back to total VRAM only when free-memory telemetry is unknown. AMD ROCm product-name detection remains best-effort and reports VRAM/utilization as unknown until reliable platform-specific parsing is added.
 
+## GPU provider health monitoring
+
+The dashboard API reports each worker GPU inventory with capability-report age and status (`healthy`, `stale`, `offline`, or `no_gpu`). It flags free VRAM at or below 10% of reported total and utilization at or above 90%. These are operational warning heuristics, not proof of hardware failure. Missing AMD telemetry is shown as unknown rather than guessed. Capability freshness is based on the last authenticated hardware refresh, not a live out-of-band GPU probe.
+
 ## Safety and limitations
 
 This remains a development prototype. Worker registration and worker operations use their dedicated tokens. Job submission and job/task inspection require the coordinator admin token. The worker listing, overview, and dashboard endpoints also require the admin token. Job claims use SQLite BEGIN IMMEDIATE transactions, preventing duplicate claims across API processes that share the same SQLite database file on one host. A multi-host coordinator still needs a networked transactional database and durable queue. Do not expose it publicly. Do not execute arbitrary user-supplied code on worker machines. Workers need a sandbox, resource limits, transport security, and stronger API authorization before production use.
@@ -74,6 +78,7 @@ SQLite persistence is local to the machine running the control plane. It does no
 - [x] Opt-in worker runtime for bounded built-in diagnostic jobs
 - [ ] Secure, sandboxed worker runtime for third-party workloads
 - [x] Initial NVIDIA GPU capability probing and authenticated inventory refresh\n- [x] NVIDIA free-VRAM and utilization telemetry with free-memory-aware scheduling
+- [x] GPU provider health assessment in admin dashboard API
 - [ ] Broader GPU capability probing (ROCm/Metal and richer telemetry)
 - [x] Distributed CPU sum prototype: split ranges into jobs and verify/aggregate chunk results\n- [x] Multi-worker chunk assignment and aggregation covered by automated coordinator tests\n- [ ] Demonstrate real workers on separate physical machines and improve multi-worker throughput
 - [ ] Shared storage backend\n- [x] Admin-authenticated network operations dashboard API
