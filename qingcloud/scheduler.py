@@ -15,6 +15,60 @@ def worker_can_run(worker: WorkerRecord, job: JobRecord) -> bool:
     return all(worker.labels.get(key) == value for key, value in job.required_labels.items())
 
 
+def worker_suitability_score(
+    worker: WorkerRecord,
+    job: JobRecord,
+    running_jobs: int = 0,
+    reliability: dict | None = None,
+) -> float:
+    """Rank compatible workers using reported headroom, load and observed outcomes.
+
+    This is a transparent heuristic, not a performance benchmark. Unknown reliability
+    receives a neutral prior and unknown GPU telemetry never becomes fabricated data.
+    """
+    reliability = reliability or {}
+    reliability_score = reliability.get("score")
+    reliability_component = float(reliability_score) if reliability_score is not None else 50.0
+    load_component = 100.0 / (1 + max(0, running_jobs))
+    cpu_component = min(100.0, worker.cpu_cores * 10.0)
+    ram_component = min(100.0, worker.ram_mb / 1024.0 * 5.0)
+
+    if job.required_gpu_vram_mb:
+        candidates = [
+            gpu for gpu in worker.gpus
+            if (gpu.free_vram_mb if gpu.free_vram_mb is not None else gpu.vram_mb) >= job.required_gpu_vram_mb
+        ]
+        gpu = max(candidates, key=lambda item: item.free_vram_mb if item.free_vram_mb is not None else item.vram_mb)
+        available = gpu.free_vram_mb if gpu.free_vram_mb is not None else gpu.vram_mb
+        headroom = min(100.0, available / max(job.required_gpu_vram_mb, 1) * 25.0)
+        utilization = gpu.utilization_percent
+        gpu_component = headroom if utilization is None else headroom * 0.7 + (100.0 - utilization) * 0.3
+        return round(gpu_component * 0.40 + reliability_component * 0.35 + load_component * 0.15 + cpu_component * 0.10, 3)
+
+    capacity_component = cpu_component * 0.6 + ram_component * 0.4
+    return round(reliability_component * 0.35 + load_component * 0.35 + capacity_component * 0.30, 3)
+
+
+def rank_workers_for_job(
+    job: JobRecord,
+    workers: list[WorkerRecord],
+    running_job_counts: dict[str, int] | None = None,
+    reliability_by_worker: dict[str, dict] | None = None,
+) -> list[dict]:
+    running_job_counts = running_job_counts or {}
+    reliability_by_worker = reliability_by_worker or {}
+    ranked = []
+    for worker in workers:
+        if not worker_can_run(worker, job):
+            continue
+        score = worker_suitability_score(
+            worker, job, running_job_counts.get(worker.worker_id, 0),
+            reliability_by_worker.get(worker.worker_id),
+        )
+        ranked.append({"worker_id": worker.worker_id, "score": score})
+    return sorted(ranked, key=lambda item: (-item["score"], item["worker_id"]))
+
+
 def claim_next_job(worker: WorkerRecord, jobs: dict[str, JobRecord]) -> JobRecord | None:
     candidates = sorted(
         (job for job in jobs.values() if job.state == JobState.queued and worker_can_run(worker, job)),
