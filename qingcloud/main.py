@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse
 
-from qingcloud.db import claim_job_atomic, init_db, load_state, save_job, save_worker, save_worker_token, record_gpu_event, list_gpu_events, record_worker_job_event, worker_reliability_stats, create_worker_invitation, redeem_worker_invitation, record_worker_approval_event, list_worker_approval_events, recover_expired_jobs_persisted
+from qingcloud.db import claim_job_atomic, init_db, load_state, save_job, save_worker, save_worker_token, record_gpu_event, list_gpu_events, record_worker_job_event, worker_reliability_stats, create_worker_invitation, redeem_worker_invitation, record_worker_approval_event, list_worker_approval_events, recover_expired_jobs_persisted, save_job_if_current_attempt
 from qingcloud.models import (
     DistributedSumCreate, JobCompletion, JobCreate, JobHeartbeat, JobRecord, JobState,
     WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration, WorkerState, WorkerInvitationCreate, WorkerApprovalUpdate, WorkerApprovalStatus, WorkerCapacityUpdate,
@@ -505,18 +505,22 @@ def job_heartbeat(
     job_id: str,
     data: JobHeartbeat,
     worker_id: str,
+    attempt: int = Query(..., ge=1, description="Fencing token returned by the claim endpoint"),
     token: str | None = Header(default=None, alias="X-QingCloud-Worker-Token"),
 ):
     authenticate_worker(worker_id, token)
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if job.state.value != "running" or job.assigned_worker_id != worker_id:
-        raise HTTPException(status_code=403, detail="Job is not assigned to this worker")
-    job.progress = data.progress
-    job.updated_at = now()
-    save_job(job)
-    return {"ok": True, "progress": job.progress, "message": data.message}
+    if job.state != JobState.running or job.assigned_worker_id != worker_id or job.attempts != attempt:
+        raise HTTPException(status_code=409, detail="Worker lease is stale or no longer assigned")
+    updated = job.model_copy(deep=True)
+    updated.progress = data.progress
+    updated.updated_at = now()
+    if not save_job_if_current_attempt(updated, worker_id, attempt):
+        raise HTTPException(status_code=409, detail="Worker lease expired or was superseded")
+    jobs[job_id] = updated
+    return {"ok": True, "progress": updated.progress, "message": data.message}
 
 
 @app.post("/v1/jobs/{job_id}/complete", response_model=JobRecord)
@@ -524,33 +528,37 @@ def complete_job(
     job_id: str,
     data: JobCompletion,
     worker_id: str,
+    attempt: int = Query(..., ge=1, description="Fencing token returned by the claim endpoint"),
     token: str | None = Header(default=None, alias="X-QingCloud-Worker-Token"),
 ):
     authenticate_worker(worker_id, token)
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if job.state.value != "running" or job.assigned_worker_id != worker_id:
-        raise HTTPException(status_code=403, detail="Job is not assigned to this worker")
+    if job.state != JobState.running or job.assigned_worker_id != worker_id or job.attempts != attempt:
+        raise HTTPException(status_code=409, detail="Worker lease is stale or no longer assigned")
+    updated = job.model_copy(deep=True)
     if data.success:
-        job.state = JobState.succeeded
-        job.result = data.result
-        job.error = None
-        job.progress = 100
+        updated.state = JobState.succeeded
+        updated.result = data.result
+        updated.error = None
+        updated.progress = 100
     else:
-        job.result = None
-        job.error = data.error or "Worker reported an unsuccessful attempt"
-        if job.attempts < job.max_attempts:
-            job.state = JobState.queued
-            job.assigned_worker_id = None
-            job.assigned_gpu_index = None
-            job.progress = 0
+        updated.result = None
+        updated.error = data.error or "Worker reported an unsuccessful attempt"
+        if updated.attempts < updated.max_attempts:
+            updated.state = JobState.queued
+            updated.assigned_worker_id = None
+            updated.assigned_gpu_index = None
+            updated.progress = 0
         else:
-            job.state = JobState.failed
-        job.reserved_gpu_vram_mb = 0
+            updated.state = JobState.failed
+        updated.reserved_gpu_vram_mb = 0
     if data.success:
-        job.reserved_gpu_vram_mb = 0
-    job.updated_at = now()
-    save_job(job)
-    record_worker_job_event(job.job_id, worker_id, "succeeded" if data.success else "failed", job.attempts, job.updated_at)
-    return job
+        updated.reserved_gpu_vram_mb = 0
+    updated.updated_at = now()
+    event_type = "succeeded" if data.success else "failed"
+    if not save_job_if_current_attempt(updated, worker_id, attempt, event_type):
+        raise HTTPException(status_code=409, detail="Worker lease expired or was superseded")
+    jobs[job_id] = updated
+    return updated
