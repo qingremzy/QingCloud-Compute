@@ -571,3 +571,55 @@ def test_provider_approval_endpoints_require_admin_and_handle_missing_workers():
     admin = {"X-QingCloud-Admin-Token": "test-admin-secret"}
     assert client.put("/v1/workers/missing/approval", headers=admin, json={"status": "approved"}).status_code == 404
     assert client.get("/v1/workers/missing/approval-history", headers=admin).status_code == 404
+
+ 
+
+def test_provider_concurrency_limit_blocks_extra_claims_until_admin_increases_capacity():
+    worker_id, token = enroll("capacity-provider")
+    admin = {"X-QingCloud-Admin-Token": "test-admin-secret"}
+    worker_headers = {"X-QingCloud-Worker-Token": token}
+    first_job = client.post("/v1/jobs", headers=admin, json={"kind": "diagnostic"}).json()
+    second_job = client.post("/v1/jobs", headers=admin, json={"kind": "echo"}).json()
+
+    first = client.post(f"/v1/workers/{worker_id}/claim", headers=worker_headers)
+    assert first.json()["job_id"] == first_job["job_id"]
+    blocked = client.post(f"/v1/workers/{worker_id}/claim", headers=worker_headers)
+    assert blocked.status_code == 200
+    assert blocked.json() is None
+
+    denied = client.put(
+        f"/v1/workers/{worker_id}/capacity",
+        json={"max_concurrent_jobs": 2},
+    )
+    assert denied.status_code == 401
+    invalid = client.put(
+        f"/v1/workers/{worker_id}/capacity",
+        headers=admin,
+        json={"max_concurrent_jobs": 17},
+    )
+    assert invalid.status_code == 422
+
+    updated = client.put(
+        f"/v1/workers/{worker_id}/capacity",
+        headers=admin,
+        json={"max_concurrent_jobs": 2},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["running_jobs"] == 1
+    assert updated.json()["available_slots"] == 1
+    second = client.post(f"/v1/workers/{worker_id}/claim", headers=worker_headers)
+    assert second.json()["job_id"] == second_job["job_id"]
+
+
+def test_provider_registry_reports_approval_and_capacity():
+    worker_id, _ = enroll("registry-capacity")
+    response = client.get(
+        "/v1/providers",
+        headers={"X-QingCloud-Admin-Token": "test-admin-secret"},
+    )
+    assert response.status_code == 200
+    provider = next(item for item in response.json()["providers"] if item["worker_id"] == worker_id)
+    assert provider["approval_status"] == "approved"
+    assert provider["max_concurrent_jobs"] == 1
+    assert provider["running_jobs"] == 0
+    assert provider["available_slots"] == 1
