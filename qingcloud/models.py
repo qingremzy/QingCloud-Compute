@@ -112,6 +112,8 @@ class JobRecord(JobCreate):
     assigned_worker_id: str | None = None
     assigned_gpu_index: int | None = Field(default=None, ge=0)
     reserved_gpu_vram_mb: int = Field(default=0, ge=0)
+    reserved_cpu_cores: int = Field(default=0, ge=0, le=256)
+    reserved_ram_mb: int = Field(default=0, ge=0, le=1048576)
     attempts: int = 0
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
