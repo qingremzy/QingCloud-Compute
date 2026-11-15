@@ -220,9 +220,36 @@ def claim_job_atomic(worker: WorkerRecord, jobs: dict[str, JobRecord], workers: 
                     item for item in online_workers
                     if running_counts.get(item.worker_id, 0) < item.max_concurrent_jobs
                 ]
+
+                # Rank against effective per-device headroom, not stale raw
+                # telemetry. Reservations are derived from persisted running
+                # jobs inside this same write transaction.
+                reservations: dict[str, dict[int, int]] = {}
+                for active in persisted_jobs:
+                    if (
+                        active.state == JobState.running
+                        and active.assigned_worker_id
+                        and active.assigned_gpu_index is not None
+                        and active.reserved_gpu_vram_mb > 0
+                    ):
+                        by_device = reservations.setdefault(active.assigned_worker_id, {})
+                        index = active.assigned_gpu_index
+                        by_device[index] = by_device.get(index, 0) + active.reserved_gpu_vram_mb
+
+                ranking_workers = []
+                for item in eligible_workers:
+                    device_reservations = reservations.get(item.worker_id, {})
+                    effective_gpus = []
+                    for position, gpu in enumerate(item.gpus):
+                        device_index = gpu.device_index if gpu.device_index is not None else position
+                        reported_free = gpu.free_vram_mb if gpu.free_vram_mb is not None else gpu.vram_mb
+                        effective_free = max(0, reported_free - device_reservations.get(device_index, 0))
+                        effective_gpus.append(gpu.model_copy(update={"free_vram_mb": effective_free}))
+                    ranking_workers.append(item.model_copy(update={"gpus": effective_gpus}))
+
                 reliability = {item.worker_id: worker_reliability_stats(item.worker_id) for item in eligible_workers}
                 for candidate in candidates:
-                    ranking = rank_workers_for_job(candidate, eligible_workers, running_counts, reliability)
+                    ranking = rank_workers_for_job(candidate, ranking_workers, running_counts, reliability)
                     if ranking and ranking[0]["worker_id"] == worker.worker_id:
                         claimed = candidate
                         break
