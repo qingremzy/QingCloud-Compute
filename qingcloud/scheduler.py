@@ -58,7 +58,10 @@ def rank_workers_for_job(
     running_job_counts = running_job_counts or {}
     reliability_by_worker = reliability_by_worker or {}
     ranked = []
+    current_time = datetime.now(timezone.utc)
     for worker in workers:
+        if current_time - worker.last_seen_at > timedelta(seconds=120):
+            continue
         if not worker_can_run(worker, job):
             continue
         score = worker_suitability_score(
