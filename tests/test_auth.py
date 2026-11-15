@@ -102,3 +102,31 @@ def test_capability_refresh_requires_worker_token():
         json={"name": "spoofed-worker"},
     )
     assert denied.status_code == 401
+
+
+def test_failed_job_is_requeued_until_attempt_limit():
+    worker_id, token = enroll("retry-worker")
+    job = client.post("/v1/jobs", json={"kind": "echo", "max_attempts": 2}).json()
+    headers = {"X-QingCloud-Worker-Token": token}
+    first_claim = client.post(f"/v1/workers/{worker_id}/claim", headers=headers)
+    assert first_claim.status_code == 200
+    job_id = job["job_id"]
+    failed = client.post(
+        f"/v1/jobs/{job_id}/complete?worker_id={worker_id}",
+        headers=headers,
+        json={"success": False, "error": "temporary failure"},
+    )
+    assert failed.status_code == 200
+    assert failed.json()["state"] == "queued"
+    assert failed.json()["assigned_worker_id"] is None
+
+    second_claim = client.post(f"/v1/workers/{worker_id}/claim", headers=headers)
+    assert second_claim.status_code == 200
+    assert second_claim.json()["attempts"] == 2
+    final = client.post(
+        f"/v1/jobs/{job_id}/complete?worker_id={worker_id}",
+        headers=headers,
+        json={"success": False, "error": "still failing"},
+    )
+    assert final.status_code == 200
+    assert final.json()["state"] == "failed"
