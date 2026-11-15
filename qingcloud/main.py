@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse
 from qingcloud.db import claim_job_atomic, init_db, load_state, save_job, save_worker, save_worker_token, record_gpu_event, list_gpu_events, record_worker_job_event, worker_reliability_stats, create_worker_invitation, redeem_worker_invitation, record_worker_approval_event, list_worker_approval_events
 from qingcloud.models import (
     DistributedSumCreate, JobCompletion, JobCreate, JobHeartbeat, JobRecord, JobState,
-    WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration, WorkerState, WorkerInvitationCreate, WorkerApprovalUpdate, WorkerApprovalStatus,
+    WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration, WorkerState, WorkerInvitationCreate, WorkerApprovalUpdate, WorkerApprovalStatus, WorkerCapacityUpdate,
 )
 from qingcloud.scheduler import recover_expired_jobs, reconcile_worker_presence
 from qingcloud.gpu_health import assess_worker_gpu_health
@@ -105,7 +105,8 @@ def dashboard(admin_token: str | None = Header(default=None, alias="X-QingCloud-
             "os": worker.os, "state": worker.state.value,
             "approval_status": worker.approval_status.value,
             "approval_updated_at": worker.approval_updated_at,
-            "approval_note": worker.approval_note, "last_seen_at": worker.last_seen_at,
+            "approval_note": worker.approval_note,
+            "max_concurrent_jobs": worker.max_concurrent_jobs, "last_seen_at": worker.last_seen_at,
             "capabilities_updated_at": worker.capabilities_updated_at,
             "gpu_health": assess_worker_gpu_health(worker, now()),
             "reliability": worker_reliability_stats(worker.worker_id),
@@ -243,6 +244,29 @@ def worker_approval_history(
         raise HTTPException(status_code=404, detail="Worker not found")
     events = list_worker_approval_events(worker_id)
     return {"worker_id": worker_id, "events": events, "total": len(events)}
+
+
+
+@app.put("/v1/workers/{worker_id}/capacity")
+def update_worker_capacity(
+    worker_id: str,
+    data: WorkerCapacityUpdate,
+    admin_token: str | None = Header(default=None, alias="X-QingCloud-Admin-Token"),
+):
+    """Set an administrator-controlled upper bound on simultaneous jobs."""
+    verify_admin_token(admin_token)
+    worker = workers.get(worker_id)
+    if worker is None:
+        raise HTTPException(status_code=404, detail="Worker not found")
+    worker.max_concurrent_jobs = data.max_concurrent_jobs
+    save_worker(worker)
+    running = sum(1 for job in jobs.values() if job.state == JobState.running and job.assigned_worker_id == worker_id)
+    return {
+        "worker_id": worker_id,
+        "max_concurrent_jobs": worker.max_concurrent_jobs,
+        "running_jobs": running,
+        "available_slots": max(0, worker.max_concurrent_jobs - running),
+    }
 
 
 @app.post("/v1/workers/{worker_id}/heartbeat")
