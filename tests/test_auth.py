@@ -901,3 +901,70 @@ def test_atomic_claim_prefers_provider_with_more_live_cpu_and_ram_headroom():
     assert claim_a.json() is None
     assert claim_b.status_code == 200
     assert claim_b.json()["assigned_worker_id"] == worker_b
+
+
+
+def test_declining_job_releases_lease_without_consuming_failure_retry():
+    worker_id, token = enroll("decline-worker")
+    headers = {"X-QingCloud-Worker-Token": token}
+    created = client.post(
+        "/v1/jobs",
+        headers={"X-QingCloud-Admin-Token": "test-admin-secret"},
+        json={"kind": "echo", "max_attempts": 1, "required_cpu_cores": 1, "required_ram_mb": 256},
+    ).json()
+    first = client.post(f"/v1/workers/{worker_id}/claim", headers=headers).json()
+    declined = client.post(
+        f"/v1/jobs/{created['job_id']}/decline?worker_id={worker_id}&attempt={first['attempts']}",
+        headers=headers,
+        json={"reason": "Local preflight says insufficient available resources"},
+    )
+    assert declined.status_code == 200
+    body = declined.json()
+    assert body["state"] == "queued"
+    assert body["assigned_worker_id"] is None
+    assert body["attempts"] == 1
+    assert body["declined_attempts"] == 1
+    assert body["reserved_cpu_cores"] == 0
+    assert body["reserved_ram_mb"] == 0
+
+    second = client.post(f"/v1/workers/{worker_id}/claim", headers=headers).json()
+    assert second["attempts"] == 2
+    completed = client.post(
+        f"/v1/jobs/{created['job_id']}/complete?worker_id={worker_id}&attempt={second['attempts']}",
+        headers=headers,
+        json={"success": True, "result": {"echo": "done"}},
+    )
+    assert completed.status_code == 200
+    assert completed.json()["state"] == "succeeded"
+
+
+def test_decline_rejects_wrong_worker_and_stale_attempt():
+    worker_a, token_a = enroll("decline-a")
+    worker_b, token_b = enroll("decline-b")
+    created = client.post(
+        "/v1/jobs",
+        headers={"X-QingCloud-Admin-Token": "test-admin-secret"},
+        json={"kind": "echo"},
+    ).json()
+    claimed = client.post(
+        f"/v1/workers/{worker_a}/claim",
+        headers={"X-QingCloud-Worker-Token": token_a},
+    ).json()
+    denied = client.post(
+        f"/v1/jobs/{created['job_id']}/decline?worker_id={worker_b}&attempt={claimed['attempts']}",
+        headers={"X-QingCloud-Worker-Token": token_b},
+        json={"reason": "not my job"},
+    )
+    assert denied.status_code == 409
+    accepted = client.post(
+        f"/v1/jobs/{created['job_id']}/decline?worker_id={worker_a}&attempt={claimed['attempts']}",
+        headers={"X-QingCloud-Worker-Token": token_a},
+        json={"reason": "cannot execute"},
+    )
+    assert accepted.status_code == 200
+    stale = client.post(
+        f"/v1/jobs/{created['job_id']}/decline?worker_id={worker_a}&attempt={claimed['attempts']}",
+        headers={"X-QingCloud-Worker-Token": token_a},
+        json={"reason": "stale retry"},
+    )
+    assert stale.status_code == 409
