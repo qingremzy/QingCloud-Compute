@@ -99,3 +99,42 @@ def test_gpu_job_falls_back_to_total_when_free_vram_is_unknown():
         gpus=[GPUDevice(name="GPU", vram_mb=16000)],
     )
     assert worker_can_run(worker, make_job(vram=12000))
+
+
+from qingcloud.scheduler import rank_workers_for_job, worker_suitability_score
+
+
+def test_intelligent_scheduler_prefers_reliable_worker_for_cpu_job():
+    job = make_job()
+    newer = WorkerRecord(worker_id="worker-new", name="new", cpu_cores=8, ram_mb=8192)
+    trusted = WorkerRecord(worker_id="worker-trusted", name="trusted", cpu_cores=8, ram_mb=8192)
+    ranked = rank_workers_for_job(
+        job, [newer, trusted],
+        reliability_by_worker={
+            "worker-new": {"score": 50.0},
+            "worker-trusted": {"score": 95.0},
+        },
+    )
+    assert ranked[0]["worker_id"] == "worker-trusted"
+
+
+def test_intelligent_scheduler_accounts_for_live_gpu_headroom_and_utilization():
+    job = make_job(vram=8000)
+    busy = WorkerRecord(
+        worker_id="worker-busy", name="busy",
+        gpus=[GPUDevice(name="GPU", vram_mb=24000, free_vram_mb=9000, utilization_percent=95)],
+    )
+    available = WorkerRecord(
+        worker_id="worker-available", name="available",
+        gpus=[GPUDevice(name="GPU", vram_mb=24000, free_vram_mb=18000, utilization_percent=15)],
+    )
+    ranked = rank_workers_for_job(job, [busy, available])
+    assert ranked[0]["worker_id"] == "worker-available"
+
+
+def test_intelligent_scheduler_accounts_for_running_job_load():
+    job = make_job()
+    a = WorkerRecord(worker_id="worker-a", name="a")
+    b = WorkerRecord(worker_id="worker-b", name="b")
+    ranked = rank_workers_for_job(job, [a, b], running_job_counts={"worker-a": 3, "worker-b": 0})
+    assert ranked[0]["worker_id"] == "worker-b"
