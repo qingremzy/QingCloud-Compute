@@ -61,6 +61,10 @@ NVIDIA inventory is read through nvidia-smi and includes total/free VRAM, utiliz
 
 The admin-only `GET /v1/workers/{worker_id}/gpu-history` endpoint returns persisted GPU hardware inventory changes, including initial inventory, additions, removals, and other hardware/driver changes. The history intentionally excludes fluctuating free VRAM and utilization readings. The dashboard API reports each worker GPU inventory with capability-report age and status (`healthy`, `stale`, `offline`, or `no_gpu`). It flags free VRAM at or below 10% of reported total and utilization at or above 90%. These are operational warning heuristics, not proof of hardware failure. Missing AMD telemetry is shown as unknown rather than guessed. Capability freshness is based on the last authenticated hardware refresh, not a live out-of-band GPU probe.
 
+## Worker reliability scoring
+
+The admin-only `GET /v1/workers/{worker_id}/reliability` endpoint reports a coordinator-derived reliability estimate. Each authenticated job completion records an outcome against the worker that actually completed that attempt, including failed attempts that are later retried. Claims and unfinished/abandoned attempts do not count as outcomes. Workers with no completed outcomes are `unrated`, not penalized. The score uses a small Laplace prior to avoid treating one success as perfect reliability: (successes + 1) / (completed outcomes + 2). Samples below 10 outcomes are marked `limited_data`, and 10 or more are `established`. The dashboard shows the score and sample size. This is an operational signal, not a guarantee of future performance or a public reputation ranking.
+
 ## Safety and limitations
 
 This remains a development prototype. Worker registration and worker operations use their dedicated tokens. Job submission and job/task inspection require the coordinator admin token. The worker listing, overview, and dashboard endpoints also require the admin token. Job claims use SQLite BEGIN IMMEDIATE transactions, preventing duplicate claims across API processes that share the same SQLite database file on one host. A multi-host coordinator still needs a networked transactional database and durable queue. Do not expose it publicly. Do not execute arbitrary user-supplied code on worker machines. Workers need a sandbox, resource limits, transport security, and stronger API authorization before production use.
@@ -80,6 +84,7 @@ SQLite persistence is local to the machine running the control plane. It does no
 - [x] Initial NVIDIA GPU capability probing and authenticated inventory refresh\n- [x] NVIDIA free-VRAM and utilization telemetry with free-memory-aware scheduling
 - [x] GPU provider health assessment in admin dashboard API
 - [x] Persistent GPU hardware inventory change history
+- [x] Coordinator-recorded worker job outcome history and reliability scoring
 - [ ] Broader GPU capability probing (ROCm/Metal and richer telemetry)
 - [x] Distributed CPU sum prototype: split ranges into jobs and verify/aggregate chunk results\n- [x] Multi-worker chunk assignment and aggregation covered by automated coordinator tests\n- [ ] Demonstrate real workers on separate physical machines and improve multi-worker throughput
 - [ ] Shared storage backend\n- [x] Admin-authenticated network operations dashboard API
