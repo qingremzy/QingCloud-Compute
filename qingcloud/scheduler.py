@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from qingcloud.models import JobRecord, JobState, WorkerRecord
+from qingcloud.models import JobRecord, JobState, WorkerRecord, WorkerApprovalStatus
 
 
 def worker_can_run(worker: WorkerRecord, job: JobRecord) -> bool:
     if worker.state.value != "online":
+        return False
+    if worker.approval_status != WorkerApprovalStatus.approved:
         return False
     if job.required_gpu_vram_mb:
         available = max((gpu.free_vram_mb if gpu.free_vram_mb is not None else gpu.vram_mb for gpu in worker.gpus), default=0)
