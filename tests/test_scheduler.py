@@ -235,3 +235,22 @@ def test_stale_ram_telemetry_does_not_override_reported_capacity():
     job = JobRecord(job_id="ram-job-stale", kind="test", required_ram_mb=4096)
     stamp = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
     assert worker_can_run(worker, job, {"created_at": stamp, "ram_available_mb": 512})
+
+
+
+def test_expired_job_releases_cpu_and_ram_reservations():
+    from datetime import datetime, timedelta, timezone
+    from qingcloud.models import JobRecord, JobState
+    from qingcloud.scheduler import recover_expired_jobs
+    job = JobRecord(
+        job_id="expired-resource-job", kind="test", state=JobState.running,
+        assigned_worker_id="worker-resource", attempts=1, max_attempts=2,
+        required_cpu_cores=4, required_ram_mb=4096,
+        reserved_cpu_cores=4, reserved_ram_mb=4096,
+        updated_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+    )
+    recovered = recover_expired_jobs({job.job_id: job})
+    assert len(recovered) == 1
+    assert job.state == JobState.queued
+    assert job.reserved_cpu_cores == 0
+    assert job.reserved_ram_mb == 0
