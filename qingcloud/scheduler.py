@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from qingcloud.models import JobRecord, JobState, WorkerRecord
 
 
@@ -26,3 +28,25 @@ def claim_next_job(worker: WorkerRecord, jobs: dict[str, JobRecord]) -> JobRecor
     job.attempts += 1
     job.updated_at = job.updated_at.__class__.now(job.updated_at.tzinfo)
     return job
+
+
+def recover_expired_jobs(jobs: dict[str, JobRecord], current_time: datetime | None = None, lease_seconds: int = 180) -> list[JobRecord]:
+    """Requeue abandoned jobs or fail them after their configured attempt limit."""
+    current_time = current_time or datetime.now(timezone.utc)
+    recovered: list[JobRecord] = []
+    for job in jobs.values():
+        if job.state != JobState.running:
+            continue
+        if current_time - job.updated_at <= timedelta(seconds=lease_seconds):
+            continue
+        job.assigned_worker_id = None
+        job.progress = 0
+        job.updated_at = current_time
+        if job.attempts < job.max_attempts:
+            job.state = JobState.queued
+            job.error = "Worker lease expired. Job returned to queue."
+        else:
+            job.state = JobState.failed
+            job.error = "Worker lease expired after maximum attempts."
+        recovered.append(job)
+    return recovered
