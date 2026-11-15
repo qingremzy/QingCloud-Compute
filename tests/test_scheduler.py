@@ -4,9 +4,7 @@ from qingcloud.scheduler import claim_next_job, worker_can_run
 
 
 def make_worker(vram=0, labels=None):
-    return WorkerRecord(
-        approval_status=WorkerApprovalStatus.approved,
-        worker_id="worker-1",
+    return WorkerRecord(approval_status=WorkerApprovalStatus.approved,         worker_id="worker-1",
         name="test-worker",
         gpus=[GPUDevice(name="test-gpu", vram_mb=vram)] if vram else [],
         labels=labels or {},
