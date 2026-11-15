@@ -38,7 +38,7 @@ Open the interactive API docs at `http://127.0.0.1:8000/docs`.
 
 The server stores only a SHA-256 hash of each worker token. If a worker loses its token, it must be re-enrolled with a new identity. The enrollment secret must remain private and must never be committed to Git.
 
-## Worker agent (discovery-only v0.1)
+## Worker agent (discovery + opt-in safe jobs)
 
 The worker_agent package detects CPU/RAM and available GPU inventory, enrolls a machine, saves its worker token locally, refreshes its hardware inventory through an authenticated endpoint, and sends authenticated heartbeats. Job execution is opt-in with --enable-jobs and is limited to bounded built-in tasks. For a remote server, use HTTPS.
 
@@ -52,13 +52,13 @@ python -m worker_agent.agent --enable-jobs
 
 On Windows PowerShell, set QCLOUD_URL and QCLOUD_ENROLLMENT_TOKEN using the $env: syntax. The default token file is ~/.qingcloud/worker.json and is created with owner-only permissions where supported. Keep it private. Subsequent runs reuse the saved token. Set QCLOUD_WORKER_CONFIG to choose another config path.
 
-The safe runtime supports diagnostic, echo (2,000-character limit), SHA-256 (10,000-character limit), and sum_range chunks (at most 10,000 integers per chunk). Failed attempts are requeued up to each job's max_attempts setting. A worker that stops renewing its job lease is treated as abandoned after 180 seconds, and the job is requeued or marked failed when another worker claims work. Submit `POST /v1/distributed/sum` with `start`, `end`, and optional `chunk_size` (maximum 10,000) to split an inclusive integer range into independently schedulable CPU jobs. Each job is assigned a task ID. Poll `GET /v1/distributed/sum/{task_id}` for progress and the final total. The coordinator verifies each returned chunk's boundaries, count, and arithmetic before accepting its partial sum. The whole task is limited to 1,000,000 integers and 100 chunks. Unknown job kinds are rejected. The worker never runs shell commands or evaluates submitted payloads. Job execution is disabled unless --enable-jobs is supplied.
+The safe runtime supports diagnostic, echo (2,000-character limit), SHA-256 (10,000-character limit), and sum_range chunks (at most 10,000 integers per chunk). The distributed-sum API has an automated two-worker identity test that verifies distinct chunk assignment and final aggregation. This validates coordinator behavior in tests, not execution across two real physical machines. Failed attempts are requeued up to each job's max_attempts setting. A worker that stops renewing its job lease is treated as abandoned after 180 seconds, and the job is requeued or marked failed when another worker claims work. Submit `POST /v1/distributed/sum` with `start`, `end`, and optional `chunk_size` (maximum 10,000) to split an inclusive integer range into independently schedulable CPU jobs. Each job is assigned a task ID. Poll `GET /v1/distributed/sum/{task_id}` for progress and the final total. The coordinator verifies each returned chunk's boundaries, count, and arithmetic before accepting its partial sum. The whole task is limited to 1,000,000 integers and 100 chunks. Unknown job kinds are rejected. The worker never runs shell commands or evaluates submitted payloads. Job execution is disabled unless --enable-jobs is supplied.
 
 NVIDIA inventory is read through nvidia-smi. AMD ROCm product-name detection is best-effort and reports VRAM as unknown (0 MB) until reliable platform-specific parsing is added.
 
 ## Safety and limitations
 
-This remains a development prototype. Job submission and read-only endpoints are not yet authenticated, and the in-process scheduler is not safe for multiple concurrent server processes. Do not expose it publicly. Do not execute arbitrary user-supplied code on worker machines. Workers need a sandbox, resource limits, transport security, and stronger API authorization before production use.
+This remains a development prototype. Job submission and read-only endpoints are not yet authenticated, and job claims are serialized within one API process, but multiple concurrent server processes are not yet safe because claiming is not protected by a database-level transaction. Do not expose it publicly. Do not execute arbitrary user-supplied code on worker machines. Workers need a sandbox, resource limits, transport security, and stronger API authorization before production use.
 
 SQLite persistence is local to the machine running the control plane. It does not provide 100 GB of shared storage or GPU capacity. Actual GPU resources must come from real enrolled machines.
 
@@ -68,12 +68,12 @@ SQLite persistence is local to the machine running the control plane. It does no
 - [x] Worker enrollment secret and per-worker API tokens
 - [x] SQLite persistence for workers, token hashes, and jobs
 - [ ] Authentication for job submission and read endpoints
-- [x] Basic retry limits and expired-worker lease recovery\n- [ ] Durable queue with concurrency-safe claiming and transactional claiming
+- [x] Basic retry limits and expired-worker lease recovery\n- [x] In-process claim locking to prevent duplicate claims within one API process\n- [ ] Durable queue with database-level transactional claiming across multiple API processes
 - [x] Worker agent for hardware discovery and authenticated heartbeat (no job execution)
 - [x] Opt-in worker runtime for bounded built-in diagnostic jobs
 - [ ] Secure, sandboxed worker runtime for third-party workloads
 - [x] Initial NVIDIA GPU capability probing and authenticated inventory refresh
 - [ ] Broader GPU capability probing (ROCm/Metal and richer telemetry)
-- [x] Distributed CPU sum prototype: split ranges into jobs and verify/aggregate chunk results\n- [ ] Multi-worker scheduling and retry policy
+- [x] Distributed CPU sum prototype: split ranges into jobs and verify/aggregate chunk results\n- [x] Multi-worker chunk assignment and aggregation covered by automated coordinator tests\n- [ ] Demonstrate real workers on separate physical machines and improve multi-worker throughput
 - [ ] Shared storage backend and dashboard
 - [ ] YTAgent integration
