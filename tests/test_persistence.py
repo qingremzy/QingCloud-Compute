@@ -1,10 +1,10 @@
 from qingcloud.db import claim_job_atomic, clear_all, load_state, save_job, save_worker, save_worker_token, record_worker_job_event
-from qingcloud.models import JobRecord, WorkerRecord, WorkerState
+from qingcloud.models import JobRecord, WorkerRecord, WorkerState, WorkerApprovalStatus
 
 
 def test_workers_jobs_and_token_hashes_survive_state_reload():
     clear_all()
-    workers = {"w-1": WorkerRecord(worker_id="w-1", name="persist-me")}
+    workers = {"w-1": WorkerRecord(approval_status=WorkerApprovalStatus.approved, worker_id="w-1", name="persist-me")}
     jobs = {"j-1": JobRecord(job_id="j-1", kind="diagnostic")}
     tokens = {"w-1": "hashed-secret-value"}
 
