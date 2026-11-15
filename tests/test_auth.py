@@ -160,15 +160,17 @@ def test_failed_job_is_requeued_until_attempt_limit():
 def test_distributed_sum_splits_jobs_and_aggregates_verified_results():
     worker_id, token = enroll("sum-worker")
     headers = {"X-QingCloud-Worker-Token": token}
-    created = client.post("/v1/distributed/sum", headers={"X-QingCloud-Admin-Token": "test-admin-secret"}, json={"start": 1, "end": 10, "chunk_size": 4})
+    created = client.post("/v1/distributed/sum", headers={"X-QingCloud-Admin-Token": "test-admin-secret"}, json={"start": 1, "end": 10, "chunk_size": 4, "source": "ytagent"})
     assert created.status_code == 200
     task = created.json()
     assert task["chunk_count"] == 3
     assert task["integer_count"] == 10
+    assert task["source"] == "ytagent"
 
     for _ in range(3):
         claimed = client.post(f"/v1/workers/{worker_id}/claim", headers=headers).json()
         assert claimed["kind"] == "sum_range"
+        assert claimed["source"] == "ytagent"
         start = claimed["payload"]["start"]
         end = claimed["payload"]["end"]
         result = {"start": start, "end": end, "count": end - start + 1,
@@ -183,6 +185,7 @@ def test_distributed_sum_splits_jobs_and_aggregates_verified_results():
     status = client.get(f"/v1/distributed/sum/{task['task_id']}", headers={"X-QingCloud-Admin-Token": "test-admin-secret"})
     assert status.status_code == 200
     assert status.json()["status"] == "succeeded"
+    assert status.json()["source"] == "ytagent"
     assert status.json()["total"] == 55
     assert status.json()["succeeded_chunks"] == 3
 
