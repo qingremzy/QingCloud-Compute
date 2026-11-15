@@ -38,6 +38,20 @@ Open the interactive API docs at `http://127.0.0.1:8000/docs`.
 
 The server stores only a SHA-256 hash of each worker token. If a worker loses its token, it must be re-enrolled with a new identity. The enrollment secret must remain private and must never be committed to Git.
 
+## Worker agent (discovery-only v0.1)
+
+The worker_agent package detects CPU/RAM and available GPU inventory, enrolls a machine, saves its worker token locally, and sends authenticated heartbeats. It deliberately does not claim or execute jobs. For a remote server, use HTTPS.
+
+```bash
+export QCLOUD_URL="https://your-qingcloud-host"
+export QCLOUD_ENROLLMENT_TOKEN="your-enrollment-secret"
+python -m worker_agent.agent --once
+```
+
+On Windows PowerShell, set QCLOUD_URL and QCLOUD_ENROLLMENT_TOKEN using the $env: syntax. The default token file is ~/.qingcloud/worker.json and is created with owner-only permissions where supported. Keep it private. Subsequent runs reuse the saved token. Set QCLOUD_WORKER_CONFIG to choose another config path.
+
+NVIDIA inventory is read through nvidia-smi. AMD ROCm product-name detection is best-effort and reports VRAM as unknown (0 MB) until reliable platform-specific parsing is added.
+
 ## Safety and limitations
 
 This remains a development prototype. Job submission and read-only endpoints are not yet authenticated, and the in-process scheduler is not safe for multiple concurrent server processes. Do not expose it publicly. Do not execute arbitrary user-supplied code on worker machines. Workers need a sandbox, resource limits, transport security, and stronger API authorization before production use.
@@ -51,6 +65,7 @@ SQLite persistence is local to the machine running the control plane. It does no
 - [x] SQLite persistence for workers, token hashes, and jobs
 - [ ] Authentication for job submission and read endpoints
 - [ ] Durable queue with concurrency-safe claiming and retry recovery
+- [x] Worker agent for hardware discovery and authenticated heartbeat (no job execution)
 - [ ] Secure, sandboxed worker runtime
 - [ ] GPU capability probing (CUDA/ROCm/Metal where available)
 - [ ] Multi-worker scheduling and retry policy
