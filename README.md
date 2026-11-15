@@ -21,16 +21,17 @@ python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
 pip install -r requirements.txt
 export QCLOUD_ENROLLMENT_TOKEN="replace-with-a-long-random-secret"
+export QCLOUD_ADMIN_TOKEN="another-long-random-secret"
 uvicorn qingcloud.main:app --reload
 ```
 
-On Windows PowerShell, set the secret with `$env:QCLOUD_ENROLLMENT_TOKEN="replace-with-a-long-random-secret"`.
+On Windows PowerShell, set both secrets with `$env:QCLOUD_ENROLLMENT_TOKEN="replace-with-a-long-random-secret"` and `$env:QCLOUD_ADMIN_TOKEN="another-long-random-secret"`. Keep both private and do not commit them.
 
 The SQLite database defaults to `qingcloud.sqlite3` in the working directory. Set `QCLOUD_DB_PATH` to change its location. Back up this file to preserve workers, jobs, and token hashes.
 
 Open the interactive API docs at `http://127.0.0.1:8000/docs`.
 
-## Worker enrollment
+## Coordinator administration\n\nJob submission and job/task inspection require the `X-QingCloud-Admin-Token` header matching `QCLOUD_ADMIN_TOKEN`. The API fails closed with HTTP 503 if the variable is not configured and rejects missing or incorrect tokens. Keep this token only in the coordinator environment and trusted admin clients. Worker enrollment and worker operations continue using their separate enrollment and per-worker tokens.\n\n## Worker enrollment
 
 1. Send `POST /v1/workers/register` with the `X-QingCloud-Enrollment-Token` header.
 2. Save the returned `access_token` securely. It is shown only at enrollment.
@@ -58,7 +59,7 @@ NVIDIA inventory is read through nvidia-smi. AMD ROCm product-name detection is 
 
 ## Safety and limitations
 
-This remains a development prototype. Job submission and read-only endpoints are not yet authenticated, and job claims use SQLite BEGIN IMMEDIATE transactions, preventing duplicate claims across API processes that share the same SQLite database file on one host. A multi-host coordinator still needs a networked transactional database and durable queue. Do not expose it publicly. Do not execute arbitrary user-supplied code on worker machines. Workers need a sandbox, resource limits, transport security, and stronger API authorization before production use.
+This remains a development prototype. Worker registration and worker operations use their dedicated tokens. Job submission and job/task inspection require the coordinator admin token. The worker listing and overview endpoints remain read-only and unauthenticated. Job claims use SQLite BEGIN IMMEDIATE transactions, preventing duplicate claims across API processes that share the same SQLite database file on one host. A multi-host coordinator still needs a networked transactional database and durable queue. Do not expose it publicly. Do not execute arbitrary user-supplied code on worker machines. Workers need a sandbox, resource limits, transport security, and stronger API authorization before production use.
 
 SQLite persistence is local to the machine running the control plane. It does not provide 100 GB of shared storage or GPU capacity. Actual GPU resources must come from real enrolled machines.
 
@@ -67,7 +68,7 @@ SQLite persistence is local to the machine running the control plane. It does no
 - [x] Initial API and in-memory scheduler prototype
 - [x] Worker enrollment secret and per-worker API tokens
 - [x] SQLite persistence for workers, token hashes, and jobs
-- [ ] Authentication for job submission and read endpoints
+- [x] Admin-token authentication for job submission and job/task inspection
 - [x] Basic retry limits and expired-worker lease recovery\n- [x] In-process claim locking to prevent duplicate claims within one API process\n- [ ] Durable queue with database-level transactional claiming across multiple API processes
 - [x] Worker agent for hardware discovery and authenticated heartbeat (no job execution)
 - [x] Opt-in worker runtime for bounded built-in diagnostic jobs
