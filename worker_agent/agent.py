@@ -29,24 +29,27 @@ def detect_gpus() -> list[dict[str, Any]]:
         "--format=csv,noheader,nounits",
     ])
     for row in csv.reader(output.splitlines(), skipinitialspace=True):
-        if len(row) < 3:
+        if len(row) < 2:
             continue
         try:
+            indexed = len(row) >= 3 and row[0].strip().isdigit()
+            offset = 1 if indexed else 0
             device: dict[str, Any] = {
-                "device_index": int(row[0].strip()),
-                "name": row[1].strip(),
+                "name": row[offset].strip(),
                 "vendor": "NVIDIA",
-                "vram_mb": max(0, int(float(row[2].strip()))),
+                "vram_mb": max(0, int(float(row[offset + 1].strip()))),
                 "runtime": "CUDA",
             }
-            if len(row) > 3 and row[3].strip().lower() not in ("", "[n/a]", "n/a"):
-                device["free_vram_mb"] = max(0, int(float(row[3].strip())))
-            if len(row) > 4 and row[4].strip().lower() not in ("", "[n/a]", "n/a"):
-                device["utilization_percent"] = min(100.0, max(0.0, float(row[4].strip())))
-            if len(row) > 5 and row[5].strip():
-                device["driver_version"] = row[5].strip()
-            if len(row) > 6 and row[6].strip().lower() not in ("", "[n/a]", "n/a"):
-                device["compute_capability"] = row[6].strip()
+            if indexed:
+                device["device_index"] = int(row[0].strip())
+            if len(row) > offset + 2 and row[offset + 2].strip().lower() not in ("", "[n/a]", "n/a"):
+                device["free_vram_mb"] = max(0, int(float(row[offset + 2].strip())))
+            if len(row) > offset + 3 and row[offset + 3].strip().lower() not in ("", "[n/a]", "n/a"):
+                device["utilization_percent"] = min(100.0, max(0.0, float(row[offset + 3].strip())))
+            if len(row) > offset + 4 and row[offset + 4].strip():
+                device["driver_version"] = row[offset + 4].strip()
+            if len(row) > offset + 5 and row[offset + 5].strip().lower() not in ("", "[n/a]", "n/a"):
+                device["compute_capability"] = row[offset + 5].strip()
             devices.append(device)
         except (ValueError, IndexError):
             continue
