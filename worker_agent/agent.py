@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse, json, os, platform, subprocess, sys, time, urllib.error, urllib.request
+import argparse, csv, json, os, platform, subprocess, sys, time, urllib.error, urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -21,19 +21,38 @@ def memory_mb() -> int:
     return 0
 
 def detect_gpus() -> list[dict[str, Any]]:
-    devices = []
-    output = _run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"])
-    for line in output.splitlines():
-        parts = [part.strip() for part in line.split(",", 1)]
-        if len(parts) == 2:
-            try:
-                devices.append({"name": parts[0], "vendor": "NVIDIA", "vram_mb": max(0, int(float(parts[1]))), "runtime": "CUDA"})
-            except ValueError:
-                continue
+    """Discover NVIDIA telemetry, with best-effort AMD device-name fallback."""
+    devices: list[dict[str, Any]] = []
+    output = _run([
+        "nvidia-smi",
+        "--query-gpu=name,memory.total,memory.free,utilization.gpu,driver_version,compute_cap",
+        "--format=csv,noheader,nounits",
+    ])
+    for row in csv.reader(output.splitlines(), skipinitialspace=True):
+        if len(row) < 2:
+            continue
+        try:
+            device: dict[str, Any] = {
+                "name": row[0].strip(),
+                "vendor": "NVIDIA",
+                "vram_mb": max(0, int(float(row[1].strip()))),
+                "runtime": "CUDA",
+            }
+            if len(row) > 2 and row[2].strip().lower() not in ("", "[n/a]", "n/a"):
+                device["free_vram_mb"] = max(0, int(float(row[2].strip())))
+            if len(row) > 3 and row[3].strip().lower() not in ("", "[n/a]", "n/a"):
+                device["utilization_percent"] = min(100.0, max(0.0, float(row[3].strip())))
+            if len(row) > 4 and row[4].strip():
+                device["driver_version"] = row[4].strip()
+            if len(row) > 5 and row[5].strip().lower() not in ("", "[n/a]", "n/a"):
+                device["compute_capability"] = row[5].strip()
+            devices.append(device)
+        except (ValueError, IndexError):
+            continue
     if devices:
         return devices
-    # ROCm product-name output is detected best-effort. VRAM remains unknown (0)
-    # until a reliable cross-version parser is available.
+    # ROCm product-name output is detected best-effort. VRAM and utilization
+    # remain unknown until stable cross-version telemetry parsing is available.
     rocm = _run(["rocm-smi", "--showproductname", "--json"])
     if rocm:
         try:
@@ -46,7 +65,10 @@ def detect_gpus() -> list[dict[str, Any]]:
                     for index, item in enumerate(value):
                         walk(item, path + " " + str(index))
                 elif isinstance(value, str) and ("card" in path.lower()) and ("product" in path.lower() or "name" in path.lower()):
-                    devices.append({"name": value, "vendor": "AMD", "vram_mb": 0, "runtime": "ROCm"})
+                    devices.append({
+                        "name": value, "vendor": "AMD", "vram_mb": 0,
+                        "free_vram_mb": None, "runtime": "ROCm",
+                    })
             walk(data)
         except (json.JSONDecodeError, TypeError):
             pass
