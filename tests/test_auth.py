@@ -156,7 +156,7 @@ def test_distributed_sum_splits_jobs_and_aggregates_verified_results():
         )
         assert completed.status_code == 200
 
-    status = client.get(f"/v1/distributed/sum/{task['task_id']}")
+    status = client.get(f"/v1/distributed/sum/{task['task_id']}", headers={"X-QingCloud-Admin-Token": "test-admin-secret"})
     assert status.status_code == 200
     assert status.json()["status"] == "succeeded"
     assert status.json()["total"] == 55
