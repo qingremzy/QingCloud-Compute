@@ -1,27 +1,42 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from uuid import uuid4
-from fastapi import FastAPI, HTTPException
+
+from fastapi import FastAPI, Header, HTTPException
 
 from qingcloud.models import (
     JobCompletion, JobCreate, JobHeartbeat, JobRecord,
-    WorkerRecord, WorkerRegistration,
+    WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration,
 )
 from qingcloud.scheduler import claim_next_job
+from qingcloud.security import (
+    hash_worker_token, issue_worker_token, require_worker_token,
+    verify_enrollment_token,
+)
 
 app = FastAPI(
     title="QingCloud Compute",
-    version="0.1.0",
+    version="0.2.0",
     description="A $0-first distributed compute control-plane prototype.",
 )
 
 workers: dict[str, WorkerRecord] = {}
 jobs: dict[str, JobRecord] = {}
+worker_token_hashes: dict[str, str] = {}
 
 
 def now():
     return datetime.now(timezone.utc)
+
+
+def authenticate_worker(worker_id: str, token: str | None) -> WorkerRecord:
+    require_worker_token(worker_id, token, worker_token_hashes)
+    worker = workers.get(worker_id)
+    if not worker:
+        raise HTTPException(status_code=404, detail="Worker not found")
+    return worker
 
 
 @app.get("/health")
@@ -43,12 +58,18 @@ def overview():
     }
 
 
-@app.post("/v1/workers/register", response_model=WorkerRecord)
-def register_worker(data: WorkerRegistration):
+@app.post("/v1/workers/register", response_model=WorkerEnrollmentResponse)
+def register_worker(
+    data: WorkerRegistration,
+    enrollment_token: str | None = Header(default=None, alias="X-QingCloud-Enrollment-Token"),
+):
+    verify_enrollment_token(enrollment_token)
     worker_id = str(uuid4())
     record = WorkerRecord(**data.model_dump(), worker_id=worker_id)
+    access_token = issue_worker_token()
     workers[worker_id] = record
-    return record
+    worker_token_hashes[worker_id] = hash_worker_token(access_token)
+    return WorkerEnrollmentResponse(worker=record, access_token=access_token)
 
 
 @app.get("/v1/workers", response_model=list[WorkerRecord])
@@ -57,10 +78,11 @@ def list_workers():
 
 
 @app.post("/v1/workers/{worker_id}/heartbeat")
-def worker_heartbeat(worker_id: str):
-    worker = workers.get(worker_id)
-    if not worker:
-        raise HTTPException(status_code=404, detail="Worker not found")
+def worker_heartbeat(
+    worker_id: str,
+    token: str | None = Header(default=None, alias="X-QingCloud-Worker-Token"),
+):
+    worker = authenticate_worker(worker_id, token)
     worker.last_seen_at = now()
     worker.state = "online"
     return {"ok": True, "last_seen_at": worker.last_seen_at}
@@ -88,34 +110,46 @@ def get_job(job_id: str):
 
 
 @app.post("/v1/workers/{worker_id}/claim", response_model=JobRecord | None)
-def worker_claim(worker_id: str):
-    worker = workers.get(worker_id)
-    if not worker:
-        raise HTTPException(status_code=404, detail="Worker not found")
+def worker_claim(
+    worker_id: str,
+    token: str | None = Header(default=None, alias="X-QingCloud-Worker-Token"),
+):
+    worker = authenticate_worker(worker_id, token)
     worker.last_seen_at = now()
-    job = claim_next_job(worker, jobs)
-    return job
+    return claim_next_job(worker, jobs)
 
 
 @app.post("/v1/jobs/{job_id}/heartbeat")
-def job_heartbeat(job_id: str, data: JobHeartbeat):
+def job_heartbeat(
+    job_id: str,
+    data: JobHeartbeat,
+    worker_id: str,
+    token: str | None = Header(default=None, alias="X-QingCloud-Worker-Token"),
+):
+    authenticate_worker(worker_id, token)
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if job.state.value != "running":
-        raise HTTPException(status_code=409, detail="Job is not running")
+    if job.state.value != "running" or job.assigned_worker_id != worker_id:
+        raise HTTPException(status_code=403, detail="Job is not assigned to this worker")
     job.progress = data.progress
     job.updated_at = now()
     return {"ok": True, "progress": job.progress, "message": data.message}
 
 
 @app.post("/v1/jobs/{job_id}/complete", response_model=JobRecord)
-def complete_job(job_id: str, data: JobCompletion):
+def complete_job(
+    job_id: str,
+    data: JobCompletion,
+    worker_id: str,
+    token: str | None = Header(default=None, alias="X-QingCloud-Worker-Token"),
+):
+    authenticate_worker(worker_id, token)
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if job.state.value != "running":
-        raise HTTPException(status_code=409, detail="Job is not running")
+    if job.state.value != "running" or job.assigned_worker_id != worker_id:
+        raise HTTPException(status_code=403, detail="Job is not assigned to this worker")
     job.state = "succeeded" if data.success else "failed"
     job.result = data.result if data.success else None
     job.error = data.error if not data.success else None
