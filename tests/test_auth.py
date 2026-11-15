@@ -178,7 +178,7 @@ def test_distributed_sum_rejects_worker_result_mismatch():
         headers=headers,
         json={"success": True, "result": {"start": 1, "end": 5, "count": 5, "sum": 999}},
     )
-    status = client.get(f"/v1/distributed/sum/{task['task_id']}")
+    status = client.get(f"/v1/distributed/sum/{task['task_id']}", headers={"X-QingCloud-Admin-Token": "test-admin-secret"})
     assert status.json()["status"] == "failed"
     assert status.json()["total"] is None
     assert status.json()["invalid_chunks"] == [claimed["job_id"]]
@@ -189,6 +189,7 @@ def test_two_workers_claim_distinct_chunks_and_complete_distributed_sum():
     worker_b, token_b = enroll("worker-b")
     task = client.post(
         "/v1/distributed/sum",
+            headers={"X-QingCloud-Admin-Token": "test-admin-secret"},
         json={"start": 1, "end": 12, "chunk_size": 3},
     ).json()
     claims = []
@@ -220,7 +221,7 @@ def test_two_workers_claim_distinct_chunks_and_complete_distributed_sum():
         )
         assert completed.status_code == 200
 
-    status = client.get(f"/v1/distributed/sum/{task['task_id']}")
+    status = client.get(f"/v1/distributed/sum/{task['task_id']}", headers={"X-QingCloud-Admin-Token": "test-admin-secret"})
     assert status.json()["status"] == "succeeded"
     assert status.json()["total"] == 78
     assert status.json()["succeeded_chunks"] == 4
