@@ -99,6 +99,11 @@ def load_or_enroll(base_url: str, config_path: Path, enrollment_token: str) -> d
     save_config(config_path, config)
     return config
 
+def send_capabilities(base_url: str, config: dict[str, str]) -> dict[str, Any]:
+    return request_json(base_url, "/v1/workers/" + config["worker_id"] + "/capabilities", "PUT",
+        payload=discover_worker(),
+        headers={"X-QingCloud-Worker-Token": config["access_token"]})
+
 def send_heartbeat(base_url: str, config: dict[str, str]) -> dict[str, Any]:
     return request_json(base_url, "/v1/workers/" + config["worker_id"] + "/heartbeat", "POST",
         headers={"X-QingCloud-Worker-Token": config["access_token"]})
@@ -111,8 +116,14 @@ def run_agent(base_url: str, config_path: Path, interval: int, once: bool = Fals
         raise RuntimeError("Set QCLOUD_ENROLLMENT_TOKEN for first enrollment.")
     config = load_or_enroll(base_url, config_path, enrollment_token)
     while True:
+        inventory = send_capabilities(base_url, config)
         result = send_heartbeat(base_url, config)
-        print(json.dumps({"heartbeat": "ok", "worker_id": config["worker_id"], **result}))
+        print(json.dumps({
+            "heartbeat": "ok",
+            "worker_id": config["worker_id"],
+            "gpu_count": len(inventory.get("gpus", [])),
+            "last_seen_at": result.get("last_seen_at"),
+        }))
         if once:
             return
         time.sleep(max(15, interval))
