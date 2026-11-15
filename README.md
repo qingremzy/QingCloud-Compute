@@ -137,3 +137,8 @@ Reservations are conservative scheduler bookkeeping, not hardware-enforced isola
 ## Live GPU reservation dashboard
 
 The admin dashboard now shows active GPU reservations by physical device, each device's reported free VRAM less the coordinator's active reservation estimate, and the GPU index plus reserved amount on each assigned job. Reservation totals are derived from jobs currently in the running state. Completion, retry after failure, and expired-lease recovery clear the active reservation amount. These figures are scheduler estimates, not hardware-enforced memory isolation or a live guarantee of available VRAM.
+
+
+### Coordinator restart recovery
+
+On startup, the coordinator reloads persisted jobs and transactionally checks running-job leases against the configured lease timeout. Expired jobs are requeued when attempts remain or failed when their attempt limit is exhausted. Recovery clears the assigned GPU device and VRAM reservation and persists the updated job record before the coordinator serves new work. Jobs with a still-valid lease are left running until their lease expires. The same persisted recovery check runs before worker claims. This prevents expired reservations from surviving a restart, but it does not prove a worker process has stopped or forcibly reclaim physical GPU memory.
