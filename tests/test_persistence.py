@@ -27,8 +27,8 @@ def test_workers_jobs_and_token_hashes_survive_state_reload():
 def test_atomic_claim_is_persisted_and_stale_second_process_cannot_claim_same_job():
     clear_all()
     save_job(JobRecord(job_id="atomic-job", kind="diagnostic"))
-    worker_a = WorkerRecord(worker_id="worker-a", name="worker-a", state=WorkerState.online)
-    worker_b = WorkerRecord(worker_id="worker-b", name="worker-b", state=WorkerState.online)
+    worker_a = WorkerRecord(approval_status=WorkerApprovalStatus.approved, worker_id="worker-a", name="worker-a", state=WorkerState.online)
+    worker_b = WorkerRecord(approval_status=WorkerApprovalStatus.approved, worker_id="worker-b", name="worker-b", state=WorkerState.online)
     process_a_jobs = {}
     process_b_jobs = {}
 
@@ -50,8 +50,8 @@ def test_atomic_claim_is_persisted_and_stale_second_process_cannot_claim_same_jo
 def test_atomic_claim_waits_for_best_suited_online_worker():
     clear_all()
     save_job(JobRecord(job_id="ranked-job", kind="diagnostic"))
-    worker_a = WorkerRecord(worker_id="worker-a", name="worker-a", state=WorkerState.online, cpu_cores=4, ram_mb=4096)
-    worker_b = WorkerRecord(worker_id="worker-b", name="worker-b", state=WorkerState.online, cpu_cores=4, ram_mb=4096)
+    worker_a = WorkerRecord(approval_status=WorkerApprovalStatus.approved, worker_id="worker-a", name="worker-a", state=WorkerState.online, cpu_cores=4, ram_mb=4096)
+    worker_b = WorkerRecord(approval_status=WorkerApprovalStatus.approved, worker_id="worker-b", name="worker-b", state=WorkerState.online, cpu_cores=4, ram_mb=4096)
     save_worker(worker_a)
     save_worker(worker_b)
     for attempt in range(10):
