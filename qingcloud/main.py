@@ -8,13 +8,14 @@ from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse
 
-from qingcloud.db import claim_job_atomic, init_db, load_state, save_job, save_worker, save_worker_token
+from qingcloud.db import claim_job_atomic, init_db, load_state, save_job, save_worker, save_worker_token, record_gpu_event, list_gpu_events
 from qingcloud.models import (
     DistributedSumCreate, JobCompletion, JobCreate, JobHeartbeat, JobRecord, JobState,
     WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration, WorkerState,
 )
 from qingcloud.scheduler import recover_expired_jobs
 from qingcloud.gpu_health import assess_worker_gpu_health
+from qingcloud.gpu_history import gpu_inventory_snapshot, classify_gpu_inventory_change
 from qingcloud.security import (
     hash_worker_token, issue_worker_token, require_worker_token,
     verify_enrollment_token, verify_admin_token,
@@ -166,13 +167,34 @@ def update_worker_capabilities(
     """Refresh a worker's self-reported hardware inventory using its own token."""
     worker = authenticate_worker(worker_id, token)
     normalized = WorkerRegistration.model_validate(data.model_dump())
+    before_gpus = gpu_inventory_snapshot(worker.gpus)
+    after_gpus = gpu_inventory_snapshot(normalized.gpus)
+    event_type = classify_gpu_inventory_change(before_gpus, after_gpus)
     for field in WorkerRegistration.model_fields:
         setattr(worker, field, getattr(normalized, field))
     worker.last_seen_at = now()
     worker.capabilities_updated_at = worker.last_seen_at
     worker.state = WorkerState.online
     save_worker(worker)
+    if event_type:
+        record_gpu_event(worker_id, event_type, before_gpus, after_gpus, worker.capabilities_updated_at)
     return worker
+
+
+@app.get("/v1/workers/{worker_id}/gpu-history")
+def worker_gpu_history(
+    worker_id: str,
+    limit: int = 50,
+    admin_token: str | None = Header(default=None, alias="X-QingCloud-Admin-Token"),
+):
+    verify_admin_token(admin_token)
+    if worker_id not in workers:
+        raise HTTPException(status_code=404, detail="Worker not found")
+    return {
+        "worker_id": worker_id,
+        "events": list_gpu_events(worker_id, limit),
+        "note": "History records stable GPU hardware inventory changes. Free VRAM and utilization are volatile live telemetry and are not logged as hardware changes.",
+    }
 
 
 @app.post("/v1/jobs", response_model=JobRecord)
