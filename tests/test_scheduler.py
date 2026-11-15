@@ -80,3 +80,22 @@ def test_live_job_lease_is_not_recovered():
     job.updated_at = datetime.now(timezone.utc)
     assert recover_expired_jobs({job.job_id: job}, lease_seconds=180) == []
     assert job.state == JobState.running
+
+
+def test_gpu_job_uses_free_vram_instead_of_total_capacity():
+    worker = WorkerRecord(
+        worker_id="worker-free-vram",
+        name="gpu-worker",
+        gpus=[GPUDevice(name="GPU", vram_mb=16000, free_vram_mb=3000)],
+    )
+    assert not worker_can_run(worker, make_job(vram=8000))
+    assert worker_can_run(worker, make_job(vram=2000))
+
+
+def test_gpu_job_falls_back_to_total_when_free_vram_is_unknown():
+    worker = WorkerRecord(
+        worker_id="worker-unknown-free",
+        name="gpu-worker",
+        gpus=[GPUDevice(name="GPU", vram_mb=16000)],
+    )
+    assert worker_can_run(worker, make_job(vram=12000))
