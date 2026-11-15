@@ -1,9 +1,9 @@
 from __future__ import annotations
 import hashlib
 from typing import Any, Callable
-from worker_agent.agent import discover_worker
 
 def _diagnostic(payload: dict[str, Any]) -> dict[str, Any]:
+    from worker_agent.agent import discover_worker
     info = discover_worker()
     return {"hostname": info["hostname"], "os": info["os"], "cpu_model": info["cpu_model"], "cpu_cores": info["cpu_cores"], "ram_mb": info["ram_mb"], "gpus": info["gpus"], "agent_version": info["labels"]["agent_version"]}
 
