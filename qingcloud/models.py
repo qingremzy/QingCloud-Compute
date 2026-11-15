@@ -26,6 +26,10 @@ class GPUDevice(BaseModel):
     name: str
     vendor: str | None = None
     vram_mb: int = Field(default=0, ge=0)
+    free_vram_mb: int | None = Field(default=None, ge=0)
+    utilization_percent: float | None = Field(default=None, ge=0, le=100)
+    driver_version: str | None = None
+    compute_capability: str | None = None
     runtime: str | None = None
 
 
