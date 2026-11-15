@@ -138,3 +138,15 @@ def test_intelligent_scheduler_accounts_for_running_job_load():
     b = WorkerRecord(worker_id="worker-b", name="b")
     ranked = rank_workers_for_job(job, [a, b], running_job_counts={"worker-a": 3, "worker-b": 0})
     assert ranked[0]["worker_id"] == "worker-b"
+
+
+def test_intelligent_scheduler_excludes_workers_with_stale_heartbeats():
+    from datetime import datetime, timedelta, timezone
+    job = make_job()
+    stale = WorkerRecord(
+        worker_id="worker-stale", name="stale",
+        last_seen_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+    fresh = WorkerRecord(worker_id="worker-fresh", name="fresh")
+    ranked = rank_workers_for_job(job, [stale, fresh])
+    assert [item["worker_id"] for item in ranked] == ["worker-fresh"]
