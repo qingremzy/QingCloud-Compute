@@ -393,3 +393,48 @@ def recover_expired_jobs_persisted(
         except Exception:
             _CONNECTION.rollback()
             raise
+
+
+def save_job_if_current_attempt(
+    job: JobRecord,
+    worker_id: str,
+    attempt: int,
+    event_type: str | None = None,
+) -> bool:
+    """Persist a heartbeat/completion only while its worker lease is current.
+
+    The attempt number is a fencing token. BEGIN IMMEDIATE makes the
+    comparison and update one SQLite transaction across coordinator processes.
+    """
+    with _LOCK:
+        _CONNECTION.execute("BEGIN IMMEDIATE")
+        try:
+            row = _CONNECTION.execute(
+                "SELECT data_json FROM jobs WHERE job_id = ?",
+                (job.job_id,),
+            ).fetchone()
+            if row is None:
+                _CONNECTION.commit()
+                return False
+            current = JobRecord.model_validate_json(row["data_json"])
+            if (
+                current.state != JobState.running
+                or current.assigned_worker_id != worker_id
+                or current.attempts != attempt
+            ):
+                _CONNECTION.commit()
+                return False
+            _CONNECTION.execute(
+                "UPDATE jobs SET data_json = ? WHERE job_id = ?",
+                (job.model_dump_json(), job.job_id),
+            )
+            if event_type in {"succeeded", "failed"}:
+                _CONNECTION.execute(
+                    "INSERT INTO worker_job_events(job_id, worker_id, event_type, attempt, created_at) VALUES(?, ?, ?, ?, ?)",
+                    (job.job_id, worker_id, event_type, attempt, job.updated_at.isoformat()),
+                )
+            _CONNECTION.commit()
+            return True
+        except Exception:
+            _CONNECTION.rollback()
+            raise
