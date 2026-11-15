@@ -89,6 +89,11 @@ Newly enrolled workers start with `approval_status=pending`. They can authentica
 
 Approval changes are recorded in SQLite and can be inspected through the admin-only `GET /v1/workers/{worker_id}/approval-history` endpoint. The provider registry and dashboard expose each provider's approval status. Rejected and pending providers remain visible for administration but are ineligible for scheduling. Approval is an administrative trust gate, not a hardware attestation or security sandbox.
 
+
+## Provider concurrency limits
+
+Each provider starts with a coordinator-controlled limit of one simultaneous job. Administrators can change the limit from 1 to 16 with the admin-authenticated `PUT /v1/workers/{worker_id}/capacity` endpoint and body `{"max_concurrent_jobs": 2}`. Atomic job claiming excludes providers that have reached their configured limit, so a saturated high-ranked worker does not block other eligible providers. The provider registry and dashboard expose the limit, running count, and available slots. This is a job-count cap, not a CPU/RAM isolation mechanism or a guarantee that a workload fits the machine.
+
 ## Safety and limitations
 
 This remains a development prototype. Worker registration and worker operations use their dedicated tokens. Job submission and job/task inspection require the coordinator admin token. The worker listing, overview, and dashboard endpoints also require the admin token. Job claims use SQLite BEGIN IMMEDIATE transactions, preventing duplicate claims across API processes that share the same SQLite database file on one host. A multi-host coordinator still needs a networked transactional database and durable queue. Do not expose it publicly. Do not execute arbitrary user-supplied code on worker machines. Workers need a sandbox, resource limits, transport security, and stronger API authorization before production use.
