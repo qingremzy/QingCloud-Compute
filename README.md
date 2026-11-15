@@ -119,7 +119,7 @@ SQLite persistence is local to the machine running the control plane. It does no
 - [ ] Broader GPU capability probing (ROCm/Metal and richer telemetry)
 - [x] Distributed CPU sum prototype: split ranges into jobs and verify/aggregate chunk results\n- [x] Multi-worker chunk assignment and aggregation covered by automated coordinator tests\n- [ ] Demonstrate real workers on separate physical machines and improve multi-worker throughput
 - [ ] Shared storage backend\n- [x] Admin-authenticated network operations dashboard API
-- [ ] YTAgent integration
+- [x] Initial YTAgent server-to-coordinator integration (authenticated distributed CPU task submission and result polling)\n- [ ] Offload YTAgent Wan video generation and narration to sandboxed QingCloud GPU workers
 
 
 ## Browser dashboard
@@ -175,3 +175,16 @@ Immediately after claiming a job and before running its allowlisted handler, the
 ### Worker job decline and retry accounting
 
 A worker that claims a job but discovers locally that it cannot safely run it can call the worker-authenticated `POST /v1/jobs/{job_id}/decline?worker_id=...&attempt=...` endpoint with a short reason. The coordinator verifies the worker identity and monotonic attempt fencing token, releases all CPU/RAM/GPU reservations, and returns the job to the queue without recording a failed execution outcome. The claim counter remains monotonic so stale workers cannot reuse an old fencing token. A separate declined-attempt counter means resource-based declines do not consume the configured failed-execution retry budget. Declines are not counted as successful or failed execution outcomes for reliability scoring.
+
+## YTAgent first-customer integration
+
+The YTAgent application can act as an authenticated QingCloud client. On the YTAgent server, configure `QINGCLOUD_URL` with this coordinator's HTTPS base URL and `QINGCLOUD_ADMIN_TOKEN` with the coordinator admin token. Never put the admin token in browser JavaScript, a mobile app, a notebook, or a worker configuration.
+
+YTAgent's server-side client uses:
+- `GET /health` and admin-authenticated `GET /v1/overview` for connection/provider status.
+- `POST /v1/distributed/sum` to submit a bounded CPU task.
+- `GET /v1/distributed/sum/{task_id}` to retrieve verified progress and results.
+
+The YTAgent API wraps these as authenticated `GET /api/compute/status`, `POST /api/compute/test`, and `GET /api/compute/tasks/{task_id}` routes. The test task defaults to summing 1–1,000 in chunks of 100. It is a real control-plane and distributed CPU integration test: it will remain queued until at least one online, approved worker runs the built-in worker agent with `--enable-jobs`.
+
+**Scope boundary:** this integration does not yet run YTAgent's Wan video generation, Kokoro narration, FFmpeg compiler, or GPU inference on QingCloud. The existing YTAgent Kaggle GPU worker remains separate. A dedicated GPU workload adapter, media transfer protocol, sandbox, and real-hardware validation are still required before video-generation offload can be claimed.
