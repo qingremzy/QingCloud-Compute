@@ -694,3 +694,55 @@ def test_dashboard_exposes_live_gpu_reservations_and_per_job_assignment():
     job = next(item for item in data["jobs"] if item["job_id"] == created["job_id"])
     assert job["assigned_gpu_index"] == 0
     assert job["reserved_gpu_vram_mb"] == 4000
+
+
+def test_gpu_provider_ranking_uses_headroom_after_existing_reservations():
+    worker_a, token_a = enroll("reserved-provider")
+    headers_a = {"X-QingCloud-Worker-Token": token_a}
+    admin = {"X-QingCloud-Admin-Token": "test-admin-secret"}
+    capacity = client.put(
+        f"/v1/workers/{worker_a}/capacity", headers=admin,
+        json={"max_concurrent_jobs": 2},
+    )
+    assert capacity.status_code == 200
+    refreshed_a = client.put(
+        f"/v1/workers/{worker_a}/capabilities",
+        headers=headers_a,
+        json={"name": "reserved-provider", "cpu_cores": 8, "ram_mb": 8192,
+              "gpus": [{"device_index": 0, "name": "GPU-A", "vram_mb": 12000, "free_vram_mb": 10000}]},
+    )
+    assert refreshed_a.status_code == 200
+
+    first_job = client.post(
+        "/v1/jobs", headers=admin,
+        json={"kind": "diagnostic", "required_gpu_vram_mb": 8000},
+    ).json()
+    first_claim = client.post(f"/v1/workers/{worker_a}/claim", headers=headers_a).json()
+    assert first_claim["job_id"] == first_job["job_id"]
+    assert first_claim["reserved_gpu_vram_mb"] == 8000
+
+    worker_b, token_b = enroll("available-provider")
+    headers_b = {"X-QingCloud-Worker-Token": token_b}
+    refreshed_b = client.put(
+        f"/v1/workers/{worker_b}/capabilities",
+        headers=headers_b,
+        json={"name": "available-provider", "cpu_cores": 8, "ram_mb": 8192,
+              "gpus": [{"device_index": 0, "name": "GPU-B", "vram_mb": 12000, "free_vram_mb": 9000}]},
+    )
+    assert refreshed_b.status_code == 200
+
+    next_job = client.post(
+        "/v1/jobs", headers=admin,
+        json={"kind": "diagnostic", "required_gpu_vram_mb": 8000},
+    ).json()
+
+    # Provider A still reports 10 GB free, but QingCloud has reserved 8 GB.
+    # Its effective 2 GB headroom must not beat provider B's 9 GB.
+    blocked_a = client.post(f"/v1/workers/{worker_a}/claim", headers=headers_a)
+    assert blocked_a.status_code == 200
+    assert blocked_a.json() is None
+
+    claim_b = client.post(f"/v1/workers/{worker_b}/claim", headers=headers_b)
+    assert claim_b.status_code == 200
+    assert claim_b.json()["job_id"] == next_job["job_id"]
+    assert claim_b.json()["assigned_worker_id"] == worker_b
