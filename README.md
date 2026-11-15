@@ -146,3 +146,8 @@ On startup, the coordinator reloads persisted jobs and transactionally checks ru
 ### Worker attempt fencing
 
 Every successful job claim increments a monotonically increasing attempt number. The worker agent must send that exact attempt value on job heartbeat and completion requests. The coordinator checks the worker identity, running state, and attempt number, then compares and persists the update inside a SQLite write transaction. A heartbeat or completion from an expired or superseded attempt receives HTTP 409 and cannot overwrite the current attempt's persisted job state. This is coordinator-side stale-request protection, not process termination or physical GPU isolation.
+
+
+### Live provider resource telemetry
+
+The worker agent samples host CPU utilization and RAM total, used, available, and percentage through `psutil`, plus available per-GPU utilization and VRAM readings from the existing NVIDIA probe. It sends these snapshots over the authenticated `POST /v1/workers/{worker_id}/telemetry` endpoint. The coordinator stores timestamped samples in SQLite. Administrators can inspect recent samples with `GET /v1/workers/{worker_id}/telemetry?limit=50`, and the dashboard API includes each worker's latest sample. History is capped per request (1–200 samples) but the prototype does not yet prune old telemetry rows automatically. Values are self-reported host telemetry, not hardware attestation or resource isolation. No real provider has been connected or benchmarked.
