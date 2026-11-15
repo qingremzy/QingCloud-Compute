@@ -83,6 +83,7 @@ def resource_snapshot() -> dict[str, Any]:
     """Sample host CPU, RAM and currently detectable GPU pressure."""
     memory = psutil.virtual_memory()
     return {
+        "cpu_cores": int(psutil.cpu_count(logical=True) or os.cpu_count() or 1),
         "cpu_percent": round(float(psutil.cpu_percent(interval=0.1)), 1),
         "ram_total_mb": int(memory.total / (1024 * 1024)),
         "ram_used_mb": int(memory.used / (1024 * 1024)),
@@ -93,6 +94,23 @@ def resource_snapshot() -> dict[str, Any]:
             for gpu in detect_gpus()
         ],
     }
+
+
+def check_job_resources(job: dict[str, Any], snapshot: dict[str, Any] | None = None) -> str | None:
+    """Reject a claimed job when this host's local snapshot cannot meet its declared requirements."""
+    current = snapshot if snapshot is not None else resource_snapshot()
+    required_cpu = int(job.get("required_cpu_cores", 0) or 0)
+    required_ram = int(job.get("required_ram_mb", 0) or 0)
+    required_gpu = int(job.get("required_gpu_vram_mb", 0) or 0)
+    if required_cpu > int(current.get("cpu_cores", 0)):
+        return f"Local CPU capacity is below the job requirement ({required_cpu} cores required)."
+    if required_ram > int(current.get("ram_available_mb", 0)):
+        return f"Local available RAM is below the job requirement ({required_ram} MB required)."
+    if required_gpu:
+        devices = current.get("gpus") or []
+        if not any(int(device.get("free_vram_mb") or 0) >= required_gpu for device in devices):
+            return f"No locally detected GPU has {required_gpu} MB of reported free VRAM."
+    return None
 
 
 def discover_worker(name: str | None = None) -> dict[str, Any]:
@@ -170,6 +188,12 @@ def claim_one_job(base_url: str, config: dict[str, str]) -> bool:
     attempt = int(job["attempts"])
     request_json(base_url, "/v1/jobs/" + job_id + "/heartbeat?worker_id=" + worker_id + "&attempt=" + str(attempt),
         "POST", payload={"progress": 10, "message": "Validating approved built-in task"}, headers=headers)
+    resource_error = check_job_resources(job)
+    if resource_error:
+        request_json(base_url, "/v1/jobs/" + job_id + "/complete?worker_id=" + worker_id + "&attempt=" + str(attempt),
+            "POST", payload={"success": False, "result": {}, "error": resource_error}, headers=headers)
+        print(json.dumps({"job_id": job_id, "job_kind": job.get("kind"), "success": False, "error": resource_error}))
+        return False
     success, result, error = execute_safe_job(job.get("kind", ""), job.get("payload") or {})
     request_json(base_url, "/v1/jobs/" + job_id + "/complete?worker_id=" + worker_id + "&attempt=" + str(attempt),
         "POST", payload={"success": success, "result": result, "error": error}, headers=headers)
