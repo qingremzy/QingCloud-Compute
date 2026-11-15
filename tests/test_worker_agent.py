@@ -1,4 +1,5 @@
 from worker_agent.agent import check_job_resources, discover_worker, detect_gpus, load_or_enroll, process_job_batch, resource_snapshot
+from worker_agent.runtime import execute_safe_job
 
 def test_discovery_reports_valid_cpu_and_ram(monkeypatch):
     monkeypatch.setattr("worker_agent.agent.memory_mb", lambda: 8192)
@@ -145,3 +146,43 @@ def test_worker_enrollment_prefers_invitation_over_shared_enrollment_secret(monk
         invitation_token="one-time-invite",
     )
     assert captured["headers"] == {"X-QingCloud-Invitation-Token": "one-time-invite"}
+
+
+
+def test_gpu_preflight_checks_the_coordinator_assigned_physical_device():
+    snapshot = {
+        "cpu_cores": 8,
+        "ram_available_mb": 8192,
+        "gpus": [
+            {"device_index": 0, "free_vram_mb": 12000},
+            {"device_index": 1, "free_vram_mb": 2048},
+        ],
+    }
+    job = {"required_gpu_vram_mb": 4096, "assigned_gpu_index": 1}
+    assert "assigned GPU" in check_job_resources(job, snapshot)
+
+
+def test_gpu_preflight_accepts_the_assigned_device_when_it_has_headroom():
+    snapshot = {
+        "cpu_cores": 8,
+        "ram_available_mb": 8192,
+        "gpus": [{"device_index": 1, "free_vram_mb": 12000}],
+    }
+    job = {"required_gpu_vram_mb": 4096, "assigned_gpu_index": 1}
+    assert check_job_resources(job, snapshot) is None
+
+
+def test_worker_advertises_cuda_execution_only_when_torch_cuda_is_available(monkeypatch):
+    monkeypatch.setattr("worker_agent.agent.cuda_torch_available", lambda: True)
+    monkeypatch.setattr("worker_agent.agent.detect_gpus", lambda: [])
+    info = discover_worker()
+    assert info["labels"]["gpu_execution"] == "cuda_torch"
+
+
+def test_gpu_matrix_runtime_fails_closed_without_torch(monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "torch", None)
+    success, result, error = execute_safe_job("gpu_matrix_multiply", {"matrix_size": 64})
+    assert success is False
+    assert result == {}
+    assert "PyTorch CUDA" in error
