@@ -126,7 +126,19 @@ def claim_one_job(base_url: str, config: dict[str, str]) -> bool:
     print(json.dumps({"job_id": job_id, "job_kind": job.get("kind"), "success": success, "error": error}))
     return True
 
-def run_agent(base_url: str, config_path: Path, interval: int, once: bool = False, enable_jobs: bool = False) -> None:
+def process_job_batch(base_url: str, config: dict[str, str], max_jobs: int = 1) -> int:
+    """Process at most max_jobs queued built-in jobs in one heartbeat cycle."""
+    if max_jobs < 1 or max_jobs > 16:
+        raise ValueError("max_jobs must be between 1 and 16")
+    completed = 0
+    for _ in range(max_jobs):
+        if not claim_one_job(base_url, config):
+            break
+        completed += 1
+    return completed
+
+
+def run_agent(base_url: str, config_path: Path, interval: int, once: bool = False, enable_jobs: bool = False, max_jobs_per_cycle: int = 1) -> None:
     if not base_url.startswith("https://") and not base_url.startswith(("http://127.0.0.1", "http://localhost")):
         raise RuntimeError("Use HTTPS for remote servers. HTTP is allowed only on localhost.")
     enrollment_token = os.getenv("QCLOUD_ENROLLMENT_TOKEN", "")
@@ -143,21 +155,23 @@ def run_agent(base_url: str, config_path: Path, interval: int, once: bool = Fals
             "last_seen_at": result.get("last_seen_at"),
         }))
         if enable_jobs:
-            claim_one_job(base_url, config)
+            processed = process_job_batch(base_url, config, max_jobs_per_cycle)
+            print(json.dumps({"jobs_processed_this_cycle": processed}))
         if once:
             return
         time.sleep(max(15, interval))
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="QingCloud discovery-only worker agent. It does not execute jobs.")
+    parser = argparse.ArgumentParser(description="QingCloud worker agent with opt-in bounded built-in job execution.")
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--interval", type=int, default=60)
-    parser.add_argument("--enable-jobs", action="store_true", help="Opt in to bounded built-in diagnostic, echo, and SHA-256 jobs")
+    parser.add_argument("--enable-jobs", action="store_true", help="Opt in to bounded built-in jobs")
+    parser.add_argument("--max-jobs-per-cycle", type=int, default=1, help="Maximum jobs to process per heartbeat cycle (1-16)")
     args = parser.parse_args()
     base_url = os.getenv("QCLOUD_URL", "http://127.0.0.1:8000")
     config_path = Path(os.getenv("QCLOUD_WORKER_CONFIG", str(Path.home() / ".qingcloud" / "worker.json")))
     try:
-        run_agent(base_url, config_path, args.interval, args.once, args.enable_jobs)
+        run_agent(base_url, config_path, args.interval, args.once, args.enable_jobs, args.max_jobs_per_cycle)
     except (RuntimeError, OSError, ValueError, KeyError) as exc:
         print("QingCloud worker error: " + str(exc), file=sys.stderr)
         raise SystemExit(1)
