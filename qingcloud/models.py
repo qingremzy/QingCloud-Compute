@@ -40,6 +40,23 @@ class GPUDevice(BaseModel):
     runtime: str | None = None
 
 
+class GPUResourceTelemetry(BaseModel):
+    device_index: int | None = Field(default=None, ge=0)
+    name: str
+    utilization_percent: float | None = Field(default=None, ge=0, le=100)
+    vram_mb: int = Field(default=0, ge=0)
+    free_vram_mb: int | None = Field(default=None, ge=0)
+
+
+class WorkerTelemetry(BaseModel):
+    cpu_percent: float = Field(ge=0, le=100)
+    ram_total_mb: int = Field(ge=0)
+    ram_used_mb: int = Field(ge=0)
+    ram_available_mb: int = Field(ge=0)
+    ram_percent: float = Field(ge=0, le=100)
+    gpus: list[GPUResourceTelemetry] = Field(default_factory=list)
+
+
 class WorkerRegistration(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     hostname: str | None = None
