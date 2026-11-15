@@ -70,6 +70,18 @@ def init_db() -> None:
             )
         """)
 
+        _CONNECTION.execute("""
+            CREATE TABLE IF NOT EXISTS worker_approval_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                worker_id TEXT NOT NULL,
+                previous_status TEXT NOT NULL,
+                new_status TEXT NOT NULL,
+                note TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        _CONNECTION.execute("CREATE INDEX IF NOT EXISTS idx_worker_approval_events_worker ON worker_approval_events(worker_id, event_id DESC)")
+
 
 def save_worker(worker: WorkerRecord) -> None:
     with _LOCK, _CONNECTION:
@@ -276,3 +288,21 @@ def invitation_token_hash_exists(token_hash: str) -> bool:
             "SELECT 1 FROM worker_invitations WHERE token_hash = ?",
             (token_hash,),
         ).fetchone() is not None
+
+def record_worker_approval_event(worker_id: str, previous_status: str, new_status: str, note: str | None = None, created_at: datetime | None = None) -> None:
+    """Persist an audit entry for every provider approval-state change."""
+    stamp = (created_at or datetime.now(timezone.utc)).isoformat()
+    with _LOCK, _CONNECTION:
+        _CONNECTION.execute(
+            "INSERT INTO worker_approval_events(worker_id, previous_status, new_status, note, created_at) VALUES(?, ?, ?, ?, ?)",
+            (worker_id, previous_status, new_status, note, stamp),
+        )
+
+
+def list_worker_approval_events(worker_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    with _LOCK:
+        rows = _CONNECTION.execute(
+            "SELECT event_id, worker_id, previous_status, new_status, note, created_at FROM worker_approval_events WHERE worker_id = ? ORDER BY event_id DESC LIMIT ?",
+            (worker_id, max(1, min(limit, 200))),
+        ).fetchall()
+    return [dict(row) for row in rows]
