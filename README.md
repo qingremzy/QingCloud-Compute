@@ -82,6 +82,13 @@ A provider enrolls with `POST /v1/workers/register` using the `X-QingCloud-Invit
 
 Keep invitation tokens private and transmit them only over HTTPS when connecting remotely. An invitation authorizes enrollment only. It does not grant admin access or make arbitrary workload execution safe.
 
+
+## Provider approval and trust controls
+
+Newly enrolled workers start with `approval_status=pending`. They can authenticate and send heartbeats, but the scheduler will not assign them jobs until an administrator explicitly approves them. Administrators can approve, reject, or return a provider to pending review with `PUT /v1/workers/{worker_id}/approval`, using the admin token. An optional note (maximum 500 characters) is retained with the current decision.
+
+Approval changes are recorded in SQLite and can be inspected through the admin-only `GET /v1/workers/{worker_id}/approval-history` endpoint. The provider registry and dashboard expose each provider's approval status. Rejected and pending providers remain visible for administration but are ineligible for scheduling. Approval is an administrative trust gate, not a hardware attestation or security sandbox.
+
 ## Safety and limitations
 
 This remains a development prototype. Worker registration and worker operations use their dedicated tokens. Job submission and job/task inspection require the coordinator admin token. The worker listing, overview, and dashboard endpoints also require the admin token. Job claims use SQLite BEGIN IMMEDIATE transactions, preventing duplicate claims across API processes that share the same SQLite database file on one host. A multi-host coordinator still needs a networked transactional database and durable queue. Do not expose it publicly. Do not execute arbitrary user-supplied code on worker machines. Workers need a sandbox, resource limits, transport security, and stronger API authorization before production use.
