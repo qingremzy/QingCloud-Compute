@@ -79,3 +79,26 @@ def test_only_assigned_worker_can_update_job():
     )
     assert allowed.status_code == 200
     assert allowed.json()["state"] == "succeeded"
+
+
+def test_worker_can_refresh_own_capabilities_only():
+    worker_id, token = enroll("worker-original")
+    response = client.put(
+        f"/v1/workers/{worker_id}/capabilities",
+        headers={"X-QingCloud-Worker-Token": token},
+        json={"name": "worker-refreshed", "cpu_cores": 8, "ram_mb": 16384,
+              "gpus": [{"name": "NVIDIA T4", "vendor": "NVIDIA", "vram_mb": 15360}],
+              "labels": {"agent": "qingcloud-worker-agent"}},
+    )
+    assert response.status_code == 200
+    assert response.json()["name"] == "worker-refreshed"
+    assert response.json()["cpu_cores"] == 8
+    assert response.json()["gpus"][0]["vram_mb"] == 15360
+
+def test_capability_refresh_requires_worker_token():
+    worker_id, token = enroll()
+    denied = client.put(
+        f"/v1/workers/{worker_id}/capabilities",
+        json={"name": "spoofed-worker"},
+    )
+    assert denied.status_code == 401
