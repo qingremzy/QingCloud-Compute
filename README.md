@@ -52,7 +52,7 @@ python -m worker_agent.agent --enable-jobs
 
 On Windows PowerShell, set QCLOUD_URL and QCLOUD_ENROLLMENT_TOKEN using the $env: syntax. The default token file is ~/.qingcloud/worker.json and is created with owner-only permissions where supported. Keep it private. Subsequent runs reuse the saved token. Set QCLOUD_WORKER_CONFIG to choose another config path.
 
-The first safe runtime supports diagnostic, echo (2,000-character limit), and SHA-256 (10,000-character limit) jobs. Failed attempts are requeued up to each job's max_attempts setting. A worker that stops renewing its job lease is treated as abandoned after 180 seconds, and the job is requeued or marked failed when another worker claims work. Unknown job kinds are rejected. The worker never runs shell commands or evaluates submitted payloads. Job execution is disabled unless --enable-jobs is supplied.
+The safe runtime supports diagnostic, echo (2,000-character limit), SHA-256 (10,000-character limit), and sum_range chunks (at most 10,000 integers per chunk). Failed attempts are requeued up to each job's max_attempts setting. A worker that stops renewing its job lease is treated as abandoned after 180 seconds, and the job is requeued or marked failed when another worker claims work. Submit `POST /v1/distributed/sum` with `start`, `end`, and optional `chunk_size` (maximum 10,000) to split an inclusive integer range into independently schedulable CPU jobs. Each job is assigned a task ID. Poll `GET /v1/distributed/sum/{task_id}` for progress and the final total. The coordinator verifies each returned chunk's boundaries, count, and arithmetic before accepting its partial sum. The whole task is limited to 1,000,000 integers and 100 chunks. Unknown job kinds are rejected. The worker never runs shell commands or evaluates submitted payloads. Job execution is disabled unless --enable-jobs is supplied.
 
 NVIDIA inventory is read through nvidia-smi. AMD ROCm product-name detection is best-effort and reports VRAM as unknown (0 MB) until reliable platform-specific parsing is added.
 
@@ -74,6 +74,6 @@ SQLite persistence is local to the machine running the control plane. It does no
 - [ ] Secure, sandboxed worker runtime for third-party workloads
 - [x] Initial NVIDIA GPU capability probing and authenticated inventory refresh
 - [ ] Broader GPU capability probing (ROCm/Metal and richer telemetry)
-- [ ] Multi-worker scheduling and retry policy
+- [x] Distributed CPU sum prototype: split ranges into jobs and verify/aggregate chunk results\n- [ ] Multi-worker scheduling and retry policy
 - [ ] Shared storage backend and dashboard
 - [ ] YTAgent integration
