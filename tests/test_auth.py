@@ -631,3 +631,37 @@ def test_provider_registry_reports_approval_and_capacity():
     assert provider["max_concurrent_jobs"] == 1
     assert provider["running_jobs"] == 0
     assert provider["available_slots"] == 1
+
+
+def test_gpu_vram_is_reserved_per_device_until_job_finishes():
+    worker_id, token = enroll("gpu-reservation-worker")
+    headers = {"X-QingCloud-Worker-Token": token}
+    admin = {"X-QingCloud-Admin-Token": "test-admin-secret"}
+    refreshed = client.put(
+        f"/v1/workers/{worker_id}/capabilities",
+        headers=headers,
+        json={"name": "gpu-reservation-worker", "cpu_cores": 8, "ram_mb": 8192,
+              "gpus": [
+                  {"device_index": 0, "name": "GPU-A", "vram_mb": 12000, "free_vram_mb": 10000},
+                  {"device_index": 1, "name": "GPU-B", "vram_mb": 16000, "free_vram_mb": 14000},
+              ]},
+    )
+    assert refreshed.status_code == 200
+    first = client.post("/v1/jobs", headers=admin, json={"kind": "diagnostic", "required_gpu_vram_mb": 8000}).json()
+    second = client.post("/v1/jobs", headers=admin, json={"kind": "diagnostic", "required_gpu_vram_mb": 8000}).json()
+    claim1 = client.post(f"/v1/workers/{worker_id}/claim", headers=headers).json()
+    claim2 = client.post(f"/v1/workers/{worker_id}/claim", headers=headers).json()
+    assert claim1["job_id"] == first["job_id"]
+    assert claim2["job_id"] == second["job_id"]
+    assert claim1["assigned_gpu_index"] == 1
+    assert claim2["assigned_gpu_index"] == 0
+    third = client.post("/v1/jobs", headers=admin, json={"kind": "diagnostic", "required_gpu_vram_mb": 8000}).json()
+    assert client.post(f"/v1/workers/{worker_id}/claim", headers=headers).json() is None
+    completed = client.post(
+        f"/v1/jobs/{claim1['job_id']}/complete?worker_id={worker_id}",
+        headers=headers, json={"success": True, "result": {"ok": True}},
+    )
+    assert completed.status_code == 200
+    retry_claim = client.post(f"/v1/workers/{worker_id}/claim", headers=headers).json()
+    assert retry_claim["job_id"] == third["job_id"]
+    assert retry_claim["assigned_gpu_index"] == 1
