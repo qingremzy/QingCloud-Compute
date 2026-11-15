@@ -61,6 +61,10 @@ NVIDIA inventory is read through nvidia-smi and includes total/free VRAM, utiliz
 
 The admin-only `GET /v1/workers/{worker_id}/gpu-history` endpoint returns persisted GPU hardware inventory changes, including initial inventory, additions, removals, and other hardware/driver changes. The history intentionally excludes fluctuating free VRAM and utilization readings. The dashboard API reports each worker GPU inventory with capability-report age and status (`healthy`, `stale`, `offline`, or `no_gpu`). It flags free VRAM at or below 10% of reported total and utilization at or above 90%. These are operational warning heuristics, not proof of hardware failure. Missing AMD telemetry is shown as unknown rather than guessed. Capability freshness is based on the last authenticated hardware refresh, not a live out-of-band GPU probe.
 
+## Intelligent worker scheduling
+
+When an enrolled worker requests a job, the coordinator ranks currently online, recently seen compatible workers before assigning it. GPU jobs consider per-device free VRAM (or total VRAM only when free-memory telemetry is unknown), reported GPU utilization, reliability, and active job load. CPU jobs consider reliability, active job load, CPU cores, and RAM. Required labels and minimum GPU VRAM remain hard eligibility filters. Workers with no outcome history receive a neutral reliability prior rather than a zero score. The ranking is a transparent heuristic, not a benchmark or guarantee. A worker that is not currently top-ranked waits for another claim cycle. Only workers reporting online and recently seen are included in the ranking.
+
 ## Worker reliability scoring
 
 The admin-only `GET /v1/workers/{worker_id}/reliability` endpoint reports a coordinator-derived reliability estimate. Each authenticated job completion records an outcome against the worker that actually completed that attempt, including failed attempts that are later retried. Claims and unfinished/abandoned attempts do not count as outcomes. Workers with no completed outcomes are `unrated`, not penalized. The score uses a small Laplace prior to avoid treating one success as perfect reliability: (successes + 1) / (completed outcomes + 2). Samples below 10 outcomes are marked `limited_data`, and 10 or more are `established`. The dashboard shows the score and sample size. This is an operational signal, not a guarantee of future performance or a public reputation ranking.
@@ -85,6 +89,7 @@ SQLite persistence is local to the machine running the control plane. It does no
 - [x] GPU provider health assessment in admin dashboard API
 - [x] Persistent GPU hardware inventory change history
 - [x] Coordinator-recorded worker job outcome history and reliability scoring
+- [x] Suitability-ranked worker assignment using GPU telemetry, reliability, and live job load
 - [ ] Broader GPU capability probing (ROCm/Metal and richer telemetry)
 - [x] Distributed CPU sum prototype: split ranges into jobs and verify/aggregate chunk results\n- [x] Multi-worker chunk assignment and aggregation covered by automated coordinator tests\n- [ ] Demonstrate real workers on separate physical machines and improve multi-worker throughput
 - [ ] Shared storage backend\n- [x] Admin-authenticated network operations dashboard API
