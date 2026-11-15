@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse
 
-from qingcloud.db import claim_job_atomic, init_db, load_state, save_job, save_worker, save_worker_token, record_gpu_event, list_gpu_events, record_worker_job_event, worker_reliability_stats, create_worker_invitation, redeem_worker_invitation, record_worker_approval_event, list_worker_approval_events
+from qingcloud.db import claim_job_atomic, init_db, load_state, save_job, save_worker, save_worker_token, record_gpu_event, list_gpu_events, record_worker_job_event, worker_reliability_stats, create_worker_invitation, redeem_worker_invitation, record_worker_approval_event, list_worker_approval_events, recover_expired_jobs_persisted
 from qingcloud.models import (
     DistributedSumCreate, JobCompletion, JobCreate, JobHeartbeat, JobRecord, JobState,
     WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration, WorkerState, WorkerInvitationCreate, WorkerApprovalUpdate, WorkerApprovalStatus, WorkerCapacityUpdate,
@@ -34,6 +34,9 @@ claim_lock = RLock()
 
 init_db()
 load_state(workers, jobs, worker_token_hashes)
+# Recover expired persisted leases immediately after restart so stale GPU
+# reservations are released before the coordinator accepts new work.
+recover_expired_jobs_persisted(jobs, now())
 # A worker cannot be assumed alive after the control plane restarts.
 for _worker in workers.values():
     _worker.state = WorkerState.offline
@@ -491,8 +494,7 @@ def worker_claim(
     # Serialize in-process claims so two API threads cannot take the same queued job.
     # A multi-process deployment will still require a database-level atomic claim.
     with claim_lock:
-        for recovered_job in recover_expired_jobs(jobs, now()):
-            save_job(recovered_job)
+        recover_expired_jobs_persisted(jobs, now())
         claimed = claim_job_atomic(worker, jobs, workers)
         save_worker(worker)
         return claimed
