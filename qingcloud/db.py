@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from datetime import datetime, timezone
 from threading import RLock
 from typing import Any
 
-from qingcloud.models import JobRecord, WorkerRecord
+from qingcloud.models import JobRecord, JobState, WorkerRecord
+from qingcloud.scheduler import worker_can_run
 
 _DB_PATH = os.getenv("QCLOUD_DB_PATH", "qingcloud.sqlite3")
 _CONNECTION = sqlite3.connect(_DB_PATH, check_same_thread=False)
@@ -16,6 +18,7 @@ _LOCK = RLock()
 def init_db() -> None:
     with _LOCK, _CONNECTION:
         _CONNECTION.execute("PRAGMA foreign_keys = ON")
+        _CONNECTION.execute("PRAGMA busy_timeout = 5000")
         _CONNECTION.execute("""
             CREATE TABLE IF NOT EXISTS workers (
                 worker_id TEXT PRIMARY KEY,
@@ -89,3 +92,40 @@ def clear_all() -> None:
         _CONNECTION.execute("DELETE FROM worker_tokens")
         _CONNECTION.execute("DELETE FROM jobs")
         _CONNECTION.execute("DELETE FROM workers")
+
+
+def claim_job_atomic(worker: WorkerRecord, jobs: dict[str, JobRecord]) -> JobRecord | None:
+    """Claim one compatible queued job using a SQLite write transaction.
+
+    BEGIN IMMEDIATE serializes claim transactions across API processes that share
+    this SQLite database file. The in-memory mapping is refreshed for the claimed row.
+    """
+    with _LOCK:
+        _CONNECTION.execute("BEGIN IMMEDIATE")
+        try:
+            rows = _CONNECTION.execute("SELECT job_id, data_json FROM jobs").fetchall()
+            candidates = []
+            for row in rows:
+                candidate = JobRecord.model_validate_json(row["data_json"])
+                if candidate.state == JobState.queued and worker_can_run(worker, candidate):
+                    candidates.append(candidate)
+            candidates.sort(key=lambda job: (job.created_at, job.job_id))
+            if not candidates:
+                _CONNECTION.commit()
+                return None
+            claimed = candidates[0]
+            claimed.state = JobState.running
+            claimed.assigned_worker_id = worker.worker_id
+            claimed.attempts += 1
+            claimed.updated_at = datetime.now(timezone.utc)
+            cursor = _CONNECTION.execute("UPDATE jobs SET data_json = ? WHERE job_id = ?",
+                (claimed.model_dump_json(), claimed.job_id),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Atomic job claim did not update exactly one row")
+            _CONNECTION.commit()
+            jobs[claimed.job_id] = claimed
+            return claimed
+        except Exception:
+            _CONNECTION.rollback()
+            raise
