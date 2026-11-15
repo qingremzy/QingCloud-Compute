@@ -376,3 +376,36 @@ def test_dashboard_includes_unrated_worker_reliability():
     response = client.get("/v1/dashboard", headers={"X-QingCloud-Admin-Token": "test-admin-secret"})
     assert response.status_code == 200
     assert response.json()["workers"][0]["reliability"]["status"] == "unrated"
+
+
+def test_provider_registry_marks_stale_workers_offline_and_persists_state():
+    from datetime import timedelta
+    from qingcloud.main import now
+    worker_id, _ = enroll("presence-worker")
+    workers[worker_id].last_seen_at = now() - timedelta(seconds=181)
+    from qingcloud.db import save_worker
+    save_worker(workers[worker_id])
+    denied = client.get("/v1/providers")
+    assert denied.status_code == 401
+    response = client.get("/v1/providers", headers={"X-QingCloud-Admin-Token": "test-admin-secret"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["offline"] == 1
+    assert body["providers"][0]["state"] == "offline"
+    assert body["providers"][0]["heartbeat_age_seconds"] >= 181
+    assert workers[worker_id].state.value == "offline"
+
+
+def test_fresh_heartbeat_returns_offline_provider_to_online_registry():
+    worker_id, token = enroll("reconnecting-worker")
+    from datetime import timedelta
+    from qingcloud.main import now
+    workers[worker_id].last_seen_at = now() - timedelta(seconds=181)
+    from qingcloud.db import save_worker
+    save_worker(workers[worker_id])
+    headers = {"X-QingCloud-Worker-Token": token}
+    heartbeat = client.post(f"/v1/workers/{worker_id}/heartbeat", headers=headers)
+    assert heartbeat.status_code == 200
+    registry = client.get("/v1/providers", headers={"X-QingCloud-Admin-Token": "test-admin-secret"})
+    assert registry.json()["online"] == 1
