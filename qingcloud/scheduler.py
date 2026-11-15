@@ -5,11 +5,26 @@ from datetime import datetime, timedelta, timezone
 from qingcloud.models import JobRecord, JobState, WorkerRecord, WorkerApprovalStatus
 
 
-def worker_can_run(worker: WorkerRecord, job: JobRecord) -> bool:
+def worker_can_run(worker: WorkerRecord, job: JobRecord, resource_telemetry: dict | None = None) -> bool:
     if worker.state.value != "online":
         return False
     if worker.approval_status != WorkerApprovalStatus.approved:
         return False
+    if job.required_cpu_cores and worker.cpu_cores < job.required_cpu_cores:
+        return False
+    if job.required_ram_mb:
+        if worker.ram_mb < job.required_ram_mb:
+            return False
+        telemetry = resource_telemetry or {}
+        sample_time = telemetry.get("created_at")
+        if sample_time:
+            try:
+                stamp = datetime.fromisoformat(sample_time.replace("Z", "+00:00"))
+                if datetime.now(timezone.utc) - stamp <= timedelta(seconds=120):
+                    if int(telemetry.get("ram_available_mb", 0)) < job.required_ram_mb:
+                        return False
+            except (TypeError, ValueError):
+                pass
     if job.required_gpu_vram_mb:
         available = max((gpu.free_vram_mb if gpu.free_vram_mb is not None else gpu.vram_mb for gpu in worker.gpus), default=0)
         if available < job.required_gpu_vram_mb:
@@ -85,7 +100,7 @@ def rank_workers_for_job(
     for worker in workers:
         if current_time - worker.last_seen_at > timedelta(seconds=120):
             continue
-        if not worker_can_run(worker, job):
+        if not worker_can_run(worker, job, telemetry_by_worker.get(worker.worker_id)):
             continue
         score = worker_suitability_score(
             worker, job, running_job_counts.get(worker.worker_id, 0),
