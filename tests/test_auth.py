@@ -876,3 +876,28 @@ def test_worker_resource_telemetry_rejects_impossible_ram_snapshot():
 def test_resource_telemetry_history_requires_admin_token():
     worker_id, _ = enroll("private-telemetry-worker")
     assert client.get(f"/v1/workers/{worker_id}/telemetry").status_code in (401, 503)
+
+
+
+def test_atomic_claim_prefers_provider_with_more_live_cpu_and_ram_headroom():
+    from datetime import datetime, timezone
+    from qingcloud.db import record_worker_telemetry, save_job
+    worker_a, token_a = enroll("pressured-provider")
+    worker_b, token_b = enroll("available-provider")
+    stamp = datetime.now(timezone.utc)
+    record_worker_telemetry(worker_a, {"cpu_percent": 98, "ram_total_mb": 8192,
+        "ram_used_mb": 7800, "ram_available_mb": 392, "ram_percent": 95, "gpus": []}, stamp)
+    record_worker_telemetry(worker_b, {"cpu_percent": 15, "ram_total_mb": 8192,
+        "ram_used_mb": 2048, "ram_available_mb": 6144, "ram_percent": 25, "gpus": []}, stamp)
+    job_response = client.post("/v1/jobs",
+        headers={"X-QingCloud-Admin-Token": "test-admin-secret"},
+        json={"kind": "echo", "payload": {"text": "resource aware"}})
+    assert job_response.status_code == 200
+    claim_a = client.post(f"/v1/workers/{worker_a}/claim",
+        headers={"X-QingCloud-Worker-Token": token_a})
+    claim_b = client.post(f"/v1/workers/{worker_b}/claim",
+        headers={"X-QingCloud-Worker-Token": token_b})
+    assert claim_a.status_code == 200
+    assert claim_a.json().get("job") is None
+    assert claim_b.status_code == 200
+    assert claim_b.json()["job"]["assigned_worker_id"] == worker_b
