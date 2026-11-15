@@ -200,3 +200,38 @@ def test_resource_aware_scheduler_ignores_stale_resource_samples():
             "ram_total_mb": 10000, "ram_available_mb": 1, "ram_percent": 99},
     })
     assert with_stale == baseline
+
+
+def test_job_cpu_and_ram_requirements_filter_workers():
+    from qingcloud.models import JobRecord
+    capable = WorkerRecord(approval_status=WorkerApprovalStatus.approved,
+        worker_id="worker-capable", name="capable", cpu_cores=8, ram_mb=16384)
+    small_cpu = WorkerRecord(approval_status=WorkerApprovalStatus.approved,
+        worker_id="worker-small-cpu", name="small-cpu", cpu_cores=2, ram_mb=16384)
+    small_ram = WorkerRecord(approval_status=WorkerApprovalStatus.approved,
+        worker_id="worker-small-ram", name="small-ram", cpu_cores=8, ram_mb=2048)
+    job = JobRecord(job_id="resource-job", kind="test", required_cpu_cores=4, required_ram_mb=4096)
+    assert worker_can_run(capable, job)
+    assert not worker_can_run(small_cpu, job)
+    assert not worker_can_run(small_ram, job)
+
+
+def test_fresh_available_ram_is_a_hard_job_requirement():
+    from datetime import datetime, timezone
+    from qingcloud.models import JobRecord
+    worker = WorkerRecord(approval_status=WorkerApprovalStatus.approved,
+        worker_id="worker-live-ram", name="live-ram", cpu_cores=8, ram_mb=16384)
+    job = JobRecord(job_id="ram-job", kind="test", required_ram_mb=4096)
+    stamp = datetime.now(timezone.utc).isoformat()
+    assert not worker_can_run(worker, job, {"created_at": stamp, "ram_available_mb": 2048})
+    assert worker_can_run(worker, job, {"created_at": stamp, "ram_available_mb": 8192})
+
+
+def test_stale_ram_telemetry_does_not_override_reported_capacity():
+    from datetime import datetime, timedelta, timezone
+    from qingcloud.models import JobRecord
+    worker = WorkerRecord(approval_status=WorkerApprovalStatus.approved,
+        worker_id="worker-stale-ram", name="stale-ram", cpu_cores=8, ram_mb=8192)
+    job = JobRecord(job_id="ram-job-stale", kind="test", required_ram_mb=4096)
+    stamp = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    assert worker_can_run(worker, job, {"created_at": stamp, "ram_available_mb": 512})
