@@ -259,7 +259,7 @@ def test_two_workers_claim_distinct_chunks_and_complete_distributed_sum():
             "sum": (start + end) * (end - start + 1) // 2,
         }
         completed = client.post(
-            f"/v1/jobs/{job['job_id']}/complete?worker_id={worker_id}&attempt={job['attempts']}",
+            f"/v1/jobs/{job['job_id']}/complete?worker_id={worker_id}&attempt={claimed['attempts']}",
             headers={"X-QingCloud-Worker-Token": token},
             json={"success": True, "result": result},
         )
