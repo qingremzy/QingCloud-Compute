@@ -21,3 +21,15 @@ def test_sha256_returns_expected_digest():
 
 def test_unknown_job_kind_is_rejected():
     assert execute_safe_job("shell", {"command":"rm -rf /"}) == (False, {}, "Unsupported job kind: shell")
+
+
+def test_sum_range_returns_bounded_partial_sum():
+    assert execute_safe_job("sum_range", {"start": 1, "end": 100}) == (
+        True, {"start": 1, "end": 100, "count": 100, "sum": 5050}, None
+    )
+
+
+def test_sum_range_rejects_oversized_or_invalid_chunks():
+    assert execute_safe_job("sum_range", {"start": 1, "end": 10001})[0] is False
+    assert execute_safe_job("sum_range", {"start": 5, "end": 4})[0] is False
+    assert execute_safe_job("sum_range", {"start": True, "end": 4})[0] is False
