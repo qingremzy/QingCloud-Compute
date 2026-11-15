@@ -170,3 +170,8 @@ When a job is claimed, its declared CPU-core and RAM requirements are recorded a
 ### Worker-side resource preflight
 
 Immediately after claiming a job and before running its allowlisted handler, the worker agent takes a fresh local CPU/RAM/GPU snapshot and checks the job's declared CPU-core, available-RAM, and GPU free-VRAM requirements again. If the local snapshot no longer meets a requirement, the agent does not execute the task, reports a failed attempt with the reason, and stops processing further jobs in that cycle so another provider can claim a retry. This is a last-moment admission check, not an OS-enforced resource limit. CPU/RAM can still change after the check, GPU telemetry can be unavailable or stale, and the built-in runtime remains limited to its existing CPU-safe task handlers.
+
+
+### Worker job decline and retry accounting
+
+A worker that claims a job but discovers locally that it cannot safely run it can call the worker-authenticated `POST /v1/jobs/{job_id}/decline?worker_id=...&attempt=...` endpoint with a short reason. The coordinator verifies the worker identity and monotonic attempt fencing token, releases all CPU/RAM/GPU reservations, and returns the job to the queue without recording a failed execution outcome. The claim counter remains monotonic so stale workers cannot reuse an old fencing token. A separate declined-attempt counter means resource-based declines do not consume the configured failed-execution retry budget. Declines are not counted as successful or failed execution outcomes for reliability scoring.
