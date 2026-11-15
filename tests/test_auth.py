@@ -181,3 +181,55 @@ def test_distributed_sum_rejects_worker_result_mismatch():
     assert status.json()["status"] == "failed"
     assert status.json()["total"] is None
     assert status.json()["invalid_chunks"] == [claimed["job_id"]]
+
+
+def test_two_workers_claim_distinct_chunks_and_complete_distributed_sum():
+    worker_a, token_a = enroll("worker-a")
+    worker_b, token_b = enroll("worker-b")
+    task = client.post(
+        "/v1/distributed/sum",
+        json={"start": 1, "end": 12, "chunk_size": 3},
+    ).json()
+    claims = []
+    for worker_id, token in ((worker_a, token_a), (worker_b, token_b),
+                             (worker_a, token_a), (worker_b, token_b)):
+        response = client.post(
+            f"/v1/workers/{worker_id}/claim",
+            headers={"X-QingCloud-Worker-Token": token},
+        )
+        assert response.status_code == 200
+        claimed = response.json()
+        assert claimed is not None
+        claims.append((worker_id, token, claimed))
+    assert len({item[2]["job_id"] for item in claims}) == 4
+
+    for worker_id, token, job in claims:
+        start = job["payload"]["start"]
+        end = job["payload"]["end"]
+        result = {
+            "start": start,
+            "end": end,
+            "count": end - start + 1,
+            "sum": (start + end) * (end - start + 1) // 2,
+        }
+        completed = client.post(
+            f"/v1/jobs/{job['job_id']}/complete?worker_id={worker_id}",
+            headers={"X-QingCloud-Worker-Token": token},
+            json={"success": True, "result": result},
+        )
+        assert completed.status_code == 200
+
+    status = client.get(f"/v1/distributed/sum/{task['task_id']}")
+    assert status.json()["status"] == "succeeded"
+    assert status.json()["total"] == 78
+    assert status.json()["succeeded_chunks"] == 4
+
+
+def test_overview_reports_online_hardware_inventory_without_pooling_vram():
+    enroll("inventory-worker")
+    overview = client.get("/v1/overview").json()
+    assert overview["online_workers"] == 1
+    assert overview["reported_cpu_cores_online"] == 2
+    assert overview["reported_ram_mb_online"] == 4096
+    assert overview["reported_gpu_count_online"] == 0
+    assert "not one unified GPU memory pool" in overview["note"]
