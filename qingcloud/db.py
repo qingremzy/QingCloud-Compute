@@ -293,6 +293,8 @@ def claim_job_atomic(worker: WorkerRecord, jobs: dict[str, JobRecord], workers: 
                         index = active.assigned_gpu_index
                         by_device[index] = by_device.get(index, 0) + active.reserved_gpu_vram_mb
 
+                reliability = {item.worker_id: worker_reliability_stats(item.worker_id) for item in eligible_workers}
+                telemetry = {item.worker_id: latest_worker_telemetry(item.worker_id) or {} for item in eligible_workers}
                 ranking_workers = []
                 for item in eligible_workers:
                     device_reservations = reservations.get(item.worker_id, {})
@@ -313,9 +315,7 @@ def claim_job_atomic(worker: WorkerRecord, jobs: dict[str, JobRecord], workers: 
                         telemetry[item.worker_id]["ram_available_mb"] = max(
                             0, int(telemetry[item.worker_id].get("ram_available_mb", 0)) - reserved["ram"]
                         )
-
-                reliability = {item.worker_id: worker_reliability_stats(item.worker_id) for item in eligible_workers}
-                telemetry = {item.worker_id: latest_worker_telemetry(item.worker_id) or {} for item in eligible_workers}
+ 
                 for candidate in candidates:
                     ranking = rank_workers_for_job(candidate, ranking_workers, running_counts, reliability, telemetry)
                     if ranking and ranking[0]["worker_id"] == worker.worker_id:
