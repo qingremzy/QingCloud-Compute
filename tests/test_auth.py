@@ -228,9 +228,29 @@ def test_two_workers_claim_distinct_chunks_and_complete_distributed_sum():
 
 def test_overview_reports_online_hardware_inventory_without_pooling_vram():
     enroll("inventory-worker")
-    overview = client.get("/v1/overview").json()
+    overview = client.get("/v1/overview", headers={"X-QingCloud-Admin-Token": "test-admin-secret"}).json()
     assert overview["online_workers"] == 1
     assert overview["reported_cpu_cores_online"] == 2
     assert overview["reported_ram_mb_online"] == 4096
     assert overview["reported_gpu_count_online"] == 0
     assert "not one unified GPU memory pool" in overview["note"]
+
+
+def test_dashboard_requires_admin_token_and_reports_network_inventory():
+    worker_id, token = enroll("dashboard-worker")
+    assert client.get("/v1/dashboard").status_code == 401
+    response = client.get("/v1/dashboard", headers={"X-QingCloud-Admin-Token": "test-admin-secret"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["overview"]["online_workers"] == 1
+    assert body["workers"][0]["worker_id"] == worker_id
+    assert body["workers"][0]["name"] == "dashboard-worker"
+    assert body["workers"][0]["running_jobs"] == 0
+    assert body["jobs"] == []
+    assert "not a unified memory pool" in body["note"]
+
+
+def test_job_submission_and_inspection_require_admin_token():
+    assert client.post("/v1/jobs", json={"kind": "diagnostic"}).status_code == 401
+    assert client.get("/v1/jobs").status_code == 401
+    assert client.get("/v1/workers").status_code == 401
