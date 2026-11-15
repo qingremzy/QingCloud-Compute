@@ -54,7 +54,8 @@ def health():
 
 
 @app.get("/v1/overview")
-def overview():
+def overview(admin_token: str | None = Header(default=None, alias="X-QingCloud-Admin-Token")):
+    verify_admin_token(admin_token)
     gpu_vram_mb = sum(gpu.vram_mb for worker in workers.values() for gpu in worker.gpus)
     online = [w for w in workers.values() if w.state.value == "online"]
     return {
@@ -91,7 +92,8 @@ def register_worker(
 
 
 @app.get("/v1/workers", response_model=list[WorkerRecord])
-def list_workers():
+def list_workers(admin_token: str | None = Header(default=None, alias="X-QingCloud-Admin-Token")):
+    verify_admin_token(admin_token)
     return list(workers.values())
 
 
