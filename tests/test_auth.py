@@ -830,3 +830,49 @@ def test_stale_worker_attempt_cannot_heartbeat_or_complete_reassigned_job():
     assert current_completion.status_code == 200
     assert current_completion.json()["state"] == "succeeded"
     assert current_completion.json()["result"]["from"] == "current attempt"
+
+
+def test_worker_resource_telemetry_is_authenticated_persisted_and_admin_readable():
+    worker_id, token = enroll("telemetry-worker")
+    snapshot = {
+        "cpu_percent": 42.5,
+        "ram_total_mb": 8192,
+        "ram_used_mb": 4096,
+        "ram_available_mb": 4096,
+        "ram_percent": 50.0,
+        "gpus": [{"device_index": 0, "name": "NVIDIA T4", "utilization_percent": 65.0,
+                  "vram_mb": 15360, "free_vram_mb": 9000}],
+    }
+    denied = client.post(f"/v1/workers/{worker_id}/telemetry", json=snapshot)
+    assert denied.status_code == 401
+    accepted = client.post(
+        f"/v1/workers/{worker_id}/telemetry",
+        headers={"X-QingCloud-Worker-Token": token},
+        json=snapshot,
+    )
+    assert accepted.status_code == 200
+    assert accepted.json()["cpu_percent"] == 42.5
+    admin = {"X-QingCloud-Admin-Token": "test-admin-secret"}
+    history = client.get(f"/v1/workers/{worker_id}/telemetry?limit=10", headers=admin)
+    assert history.status_code == 200
+    assert history.json()["total"] == 1
+    assert history.json()["samples"][0]["gpus"][0]["utilization_percent"] == 65.0
+    dashboard = client.get("/v1/dashboard", headers=admin)
+    row = next(item for item in dashboard.json()["workers"] if item["worker_id"] == worker_id)
+    assert row["resource_telemetry"]["ram_percent"] == 50.0
+
+
+def test_worker_resource_telemetry_rejects_impossible_ram_snapshot():
+    worker_id, token = enroll("bad-telemetry-worker")
+    response = client.post(
+        f"/v1/workers/{worker_id}/telemetry",
+        headers={"X-QingCloud-Worker-Token": token},
+        json={"cpu_percent": 20, "ram_total_mb": 1000, "ram_used_mb": 900,
+              "ram_available_mb": 900, "ram_percent": 90, "gpus": []},
+    )
+    assert response.status_code == 422
+
+
+def test_resource_telemetry_history_requires_admin_token():
+    worker_id, _ = enroll("private-telemetry-worker")
+    assert client.get(f"/v1/workers/{worker_id}/telemetry").status_code in (401, 503)
