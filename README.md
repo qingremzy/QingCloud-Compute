@@ -125,3 +125,10 @@ SQLite persistence is local to the machine running the control plane. It does no
 ## Browser dashboard
 
 Open `/dashboard` on the running coordinator to use the browser control room. Enter the value configured as `QCLOUD_ADMIN_TOKEN` when prompted. The page requests the protected `/v1/dashboard` API using the admin header, keeps the token only in page memory, does not put it in the URL or browser storage, and clears it when you disconnect or close the page. It refreshes the snapshot every 15 seconds while connected. Serve the coordinator over HTTPS whenever it is accessed remotely. This UI does not make the prototype safe for public exposure.
+
+
+## GPU workload reservations
+
+GPU jobs request a minimum `required_gpu_vram_mb`. At claim time, the coordinator selects one physical GPU device on that worker and records `assigned_gpu_index` plus `reserved_gpu_vram_mb` on the job. While the job is running, later claims subtract reservations for that same worker/device from its reported free-VRAM snapshot. A reservation is released automatically when the job succeeds, fails/requeues, or its lease is recovered, because only currently running jobs count. NVIDIA workers report stable `nvidia-smi` device indexes. For older or non-NVIDIA reports without an index, the coordinator uses the device position in the latest inventory.
+
+Reservations are conservative scheduler bookkeeping, not hardware-enforced isolation. They do not stop another local process from consuming GPU memory, and fresh telemetry may already reflect memory used by a running workload, so reservation accounting can temporarily understate headroom. GPU workloads are not yet executable through the built-in worker runtime, which currently supports bounded CPU-safe task types only. No real GPU provider has been connected or hardware-tested.
