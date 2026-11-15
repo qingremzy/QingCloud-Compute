@@ -188,6 +188,7 @@ def clear_all() -> None:
         _CONNECTION.execute("DELETE FROM worker_tokens")
         _CONNECTION.execute("DELETE FROM worker_job_events")
         _CONNECTION.execute("DELETE FROM gpu_events")
+        _CONNECTION.execute("DELETE FROM worker_approval_events")
         _CONNECTION.execute("DELETE FROM jobs")
         _CONNECTION.execute("DELETE FROM workers")
 
