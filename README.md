@@ -65,6 +65,10 @@ The admin-only `GET /v1/workers/{worker_id}/gpu-history` endpoint returns persis
 
 When an enrolled worker requests a job, the coordinator ranks currently online, recently seen compatible workers before assigning it. GPU jobs consider per-device free VRAM (or total VRAM only when free-memory telemetry is unknown), reported GPU utilization, reliability, and active job load. CPU jobs consider reliability, active job load, CPU cores, and RAM. Required labels and minimum GPU VRAM remain hard eligibility filters. Workers with no outcome history receive a neutral reliability prior rather than a zero score. The ranking is a transparent heuristic, not a benchmark or guarantee. A worker that is not currently top-ranked waits for another claim cycle. Only workers reporting online and recently seen are included in the ranking.
 
+## Provider presence and registry
+
+The admin-only `GET /v1/providers` endpoint lists enrolled providers with heartbeat age, hardware summary, labels, and online/offline counts. The coordinator automatically marks a provider offline after 120 seconds without an authenticated heartbeat, persists that state, and marks it online again when the provider sends a fresh heartbeat. This is heartbeat-based presence detection, not internet-wide device discovery or automatic enrollment of unknown machines. A volunteer must run the QingCloud worker agent and possess the private enrollment secret to join.
+
 ## Worker reliability scoring
 
 The admin-only `GET /v1/workers/{worker_id}/reliability` endpoint reports a coordinator-derived reliability estimate. Each authenticated job completion records an outcome against the worker that actually completed that attempt, including failed attempts that are later retried. Claims and unfinished/abandoned attempts do not count as outcomes. Workers with no completed outcomes are `unrated`, not penalized. The score uses a small Laplace prior to avoid treating one success as perfect reliability: (successes + 1) / (completed outcomes + 2). Samples below 10 outcomes are marked `limited_data`, and 10 or more are `established`. The dashboard shows the score and sample size. This is an operational signal, not a guarantee of future performance or a public reputation ranking.
@@ -90,6 +94,7 @@ SQLite persistence is local to the machine running the control plane. It does no
 - [x] Persistent GPU hardware inventory change history
 - [x] Coordinator-recorded worker job outcome history and reliability scoring
 - [x] Suitability-ranked worker assignment using GPU telemetry, reliability, and live job load
+- [x] Authenticated provider registry with automatic stale-heartbeat offline detection
 - [ ] Broader GPU capability probing (ROCm/Metal and richer telemetry)
 - [x] Distributed CPU sum prototype: split ranges into jobs and verify/aggregate chunk results\n- [x] Multi-worker chunk assignment and aggregation covered by automated coordinator tests\n- [ ] Demonstrate real workers on separate physical machines and improve multi-worker throughput
 - [ ] Shared storage backend\n- [x] Admin-authenticated network operations dashboard API
