@@ -338,7 +338,7 @@ def worker_claim(
     with claim_lock:
         for recovered_job in recover_expired_jobs(jobs, now()):
             save_job(recovered_job)
-        claimed = claim_job_atomic(worker, jobs)
+        claimed = claim_job_atomic(worker, jobs, workers)
         save_worker(worker)
         return claimed
 
