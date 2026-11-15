@@ -141,7 +141,7 @@ def dashboard(admin_token: str | None = Header(default=None, alias="X-QingCloud-
             "gpu_reservations": list(gpu_reservations.values()),
         })
     job_rows = [{
-        "job_id": job.job_id, "task_id": job.task_id, "kind": job.kind, "state": job.state.value,
+        "job_id": job.job_id, "task_id": job.task_id, "kind": job.kind, "source": job.source, "state": job.state.value,
         "assigned_worker_id": job.assigned_worker_id, "assigned_gpu_index": job.assigned_gpu_index,
         "reserved_gpu_vram_mb": job.reserved_gpu_vram_mb, "required_gpu_vram_mb": job.required_gpu_vram_mb,
         "required_cpu_cores": job.required_cpu_cores, "required_ram_mb": job.required_ram_mb,
@@ -155,7 +155,7 @@ def dashboard(admin_token: str | None = Header(default=None, alias="X-QingCloud-
         if not job.task_id:
             continue
         group = task_groups.setdefault(job.task_id, {
-            "task_id": job.task_id, "kind": "distributed_sum", "chunks": 0,
+            "task_id": job.task_id, "kind": "distributed_sum", "source": job.source, "chunks": 0,
             "succeeded": 0, "running": 0, "queued": 0, "failed": 0,
         })
         group["chunks"] += 1
@@ -437,6 +437,7 @@ def create_distributed_sum(
             kind="sum_range",
             payload={"start": chunk_start, "end": chunk_end},
             max_attempts=2,
+            source=data.source,
         )
         jobs[record.job_id] = record
         save_job(record)
@@ -451,6 +452,7 @@ def create_distributed_sum(
         "chunk_count": len(chunk_ids),
         "job_ids": chunk_ids,
         "status": "queued",
+        "source": data.source,
     }
 
 
