@@ -28,6 +28,10 @@ worker_token_hashes: dict[str, str] = {}
 
 init_db()
 load_state(workers, jobs, worker_token_hashes)
+# A worker cannot be assumed alive after the control plane restarts.
+for _worker in workers.values():
+    _worker.state = "offline"
+    save_worker(_worker)
 
 
 def now():
