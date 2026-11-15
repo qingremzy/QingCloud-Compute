@@ -150,3 +150,19 @@ def test_intelligent_scheduler_excludes_workers_with_stale_heartbeats():
     fresh = WorkerRecord(approval_status=WorkerApprovalStatus.approved, worker_id="worker-fresh", name="fresh")
     ranked = rank_workers_for_job(job, [stale, fresh])
     assert [item["worker_id"] for item in ranked] == ["worker-fresh"]
+
+
+def test_expired_gpu_job_releases_device_reservation():
+    job = make_job(vram=6000)
+    job.state = JobState.running
+    job.assigned_worker_id = "worker-old"
+    job.assigned_gpu_index = 1
+    job.reserved_gpu_vram_mb = 6000
+    job.attempts = 1
+    job.updated_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+    recovered = recover_expired_jobs({job.job_id: job}, lease_seconds=60)
+    assert recovered == [job]
+    assert job.state == JobState.queued
+    assert job.assigned_worker_id is None
+    assert job.assigned_gpu_index is None
+    assert job.reserved_gpu_vram_mb == 0
