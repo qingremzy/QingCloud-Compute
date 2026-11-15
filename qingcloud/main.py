@@ -100,6 +100,25 @@ def dashboard(admin_token: str | None = Header(default=None, alias="X-QingCloud-
     worker_rows = []
     for worker in workers.values():
         running = [job for job in jobs.values() if job.assigned_worker_id == worker.worker_id and job.state.value == "running"]
+        gpu_reservations = {}
+        for active_job in running:
+            if active_job.assigned_gpu_index is None or active_job.reserved_gpu_vram_mb <= 0:
+                continue
+            index = active_job.assigned_gpu_index
+            entry = gpu_reservations.setdefault(index, {"device_index": index, "reserved_vram_mb": 0, "job_ids": []})
+            entry["reserved_vram_mb"] += active_job.reserved_gpu_vram_mb
+            entry["job_ids"].append(active_job.job_id)
+        gpu_rows = []
+        for position, gpu in enumerate(worker.gpus):
+            index = gpu.device_index if gpu.device_index is not None else position
+            reserved = gpu_reservations.get(index, {}).get("reserved_vram_mb", 0)
+            reported_free = gpu.free_vram_mb if gpu.free_vram_mb is not None else gpu.vram_mb
+            gpu_rows.append({
+                **gpu.model_dump(), "effective_device_index": index,
+                "reserved_vram_mb": reserved,
+                "scheduler_headroom_vram_mb": max(0, reported_free - reserved),
+                "reservation_job_ids": gpu_reservations.get(index, {}).get("job_ids", []),
+            })
         worker_rows.append({
             "worker_id": worker.worker_id, "name": worker.name, "hostname": worker.hostname,
             "os": worker.os, "state": worker.state.value,
@@ -111,11 +130,15 @@ def dashboard(admin_token: str | None = Header(default=None, alias="X-QingCloud-
             "gpu_health": assess_worker_gpu_health(worker, now()),
             "reliability": worker_reliability_stats(worker.worker_id),
             "cpu_cores": worker.cpu_cores, "ram_mb": worker.ram_mb,
-            "gpus": [gpu.model_dump() for gpu in worker.gpus], "running_jobs": len(running),
+            "gpus": gpu_rows, "running_jobs": len(running),
+            "reserved_gpu_vram_mb_total": sum(item["reserved_vram_mb"] for item in gpu_reservations.values()),
+            "gpu_reservations": list(gpu_reservations.values()),
         })
     job_rows = [{
         "job_id": job.job_id, "task_id": job.task_id, "kind": job.kind, "state": job.state.value,
-        "assigned_worker_id": job.assigned_worker_id, "attempts": job.attempts,
+        "assigned_worker_id": job.assigned_worker_id, "assigned_gpu_index": job.assigned_gpu_index,
+        "reserved_gpu_vram_mb": job.reserved_gpu_vram_mb, "required_gpu_vram_mb": job.required_gpu_vram_mb,
+        "attempts": job.attempts,
         "max_attempts": job.max_attempts, "progress": job.progress,
         "created_at": job.created_at, "updated_at": job.updated_at, "error": job.error,
     } for job in jobs.values()]
@@ -518,9 +541,13 @@ def complete_job(
         if job.attempts < job.max_attempts:
             job.state = JobState.queued
             job.assigned_worker_id = None
+            job.assigned_gpu_index = None
             job.progress = 0
         else:
             job.state = JobState.failed
+        job.reserved_gpu_vram_mb = 0
+    if data.success:
+        job.reserved_gpu_vram_mb = 0
     job.updated_at = now()
     save_job(job)
     record_worker_job_event(job.job_id, worker_id, "succeeded" if data.success else "failed", job.attempts, job.updated_at)
