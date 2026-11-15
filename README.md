@@ -78,3 +78,8 @@ SQLite persistence is local to the machine running the control plane. It does no
 - [x] Distributed CPU sum prototype: split ranges into jobs and verify/aggregate chunk results\n- [x] Multi-worker chunk assignment and aggregation covered by automated coordinator tests\n- [ ] Demonstrate real workers on separate physical machines and improve multi-worker throughput
 - [ ] Shared storage backend\n- [x] Admin-authenticated network operations dashboard API
 - [ ] YTAgent integration
+
+
+## Browser dashboard
+
+Open `/dashboard` on the running coordinator to use the browser control room. Enter the value configured as `QCLOUD_ADMIN_TOKEN` when prompted. The page requests the protected `/v1/dashboard` API using the admin header, keeps the token only in page memory, does not put it in the URL or browser storage, and clears it when you disconnect or close the page. It refreshes the snapshot every 15 seconds while connected. Serve the coordinator over HTTPS whenever it is accessed remotely. This UI does not make the prototype safe for public exposure.
