@@ -115,6 +115,7 @@ class JobRecord(JobCreate):
     reserved_cpu_cores: int = Field(default=0, ge=0, le=256)
     reserved_ram_mb: int = Field(default=0, ge=0, le=1048576)
     attempts: int = 0
+    declined_attempts: int = Field(default=0, ge=0)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
     progress: float = Field(default=0, ge=0, le=100)
@@ -125,6 +126,10 @@ class JobRecord(JobCreate):
 class JobHeartbeat(BaseModel):
     progress: float = Field(ge=0, le=100)
     message: str | None = None
+
+
+class JobDecline(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
 
 
 class JobCompletion(BaseModel):
