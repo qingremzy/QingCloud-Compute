@@ -144,10 +144,11 @@ def claim_one_job(base_url: str, config: dict[str, str]) -> bool:
     if not job:
         return False
     job_id = job["job_id"]
-    request_json(base_url, "/v1/jobs/" + job_id + "/heartbeat?worker_id=" + worker_id,
+    attempt = int(job["attempts"])
+    request_json(base_url, "/v1/jobs/" + job_id + "/heartbeat?worker_id=" + worker_id + "&attempt=" + str(attempt),
         "POST", payload={"progress": 10, "message": "Validating approved built-in task"}, headers=headers)
     success, result, error = execute_safe_job(job.get("kind", ""), job.get("payload") or {})
-    request_json(base_url, "/v1/jobs/" + job_id + "/complete?worker_id=" + worker_id,
+    request_json(base_url, "/v1/jobs/" + job_id + "/complete?worker_id=" + worker_id + "&attempt=" + str(attempt),
         "POST", payload={"success": success, "result": result, "error": error}, headers=headers)
     print(json.dumps({"job_id": job_id, "job_kind": job.get("kind"), "success": success, "error": error}))
     return True
