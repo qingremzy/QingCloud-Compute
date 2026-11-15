@@ -166,3 +166,37 @@ def test_expired_gpu_job_releases_device_reservation():
     assert job.assigned_worker_id is None
     assert job.assigned_gpu_index is None
     assert job.reserved_gpu_vram_mb == 0
+
+
+def test_resource_aware_scheduler_prefers_provider_with_more_live_cpu_and_ram_headroom():
+    from datetime import datetime, timezone
+    job = make_job()
+    pressured = WorkerRecord(approval_status=WorkerApprovalStatus.approved,
+        worker_id="worker-pressured", name="pressured", cpu_cores=8, ram_mb=16384)
+    available = WorkerRecord(approval_status=WorkerApprovalStatus.approved,
+        worker_id="worker-available", name="available", cpu_cores=8, ram_mb=16384)
+    stamp = datetime.now(timezone.utc).isoformat()
+    ranked = rank_workers_for_job(
+        job, [pressured, available],
+        telemetry_by_worker={
+            "worker-pressured": {"created_at": stamp, "cpu_percent": 96,
+                "ram_total_mb": 16384, "ram_available_mb": 512, "ram_percent": 97},
+            "worker-available": {"created_at": stamp, "cpu_percent": 18,
+                "ram_total_mb": 16384, "ram_available_mb": 12288, "ram_percent": 25},
+        },
+    )
+    assert ranked[0]["worker_id"] == "worker-available"
+
+
+def test_resource_aware_scheduler_ignores_stale_resource_samples():
+    from datetime import datetime, timedelta, timezone
+    job = make_job()
+    a = WorkerRecord(approval_status=WorkerApprovalStatus.approved, worker_id="worker-a", name="a")
+    b = WorkerRecord(approval_status=WorkerApprovalStatus.approved, worker_id="worker-b", name="b")
+    baseline = rank_workers_for_job(job, [a, b])
+    stale_stamp = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    with_stale = rank_workers_for_job(job, [a, b], telemetry_by_worker={
+        "worker-a": {"created_at": stale_stamp, "cpu_percent": 99,
+            "ram_total_mb": 10000, "ram_available_mb": 1, "ram_percent": 99},
+    })
+    assert with_stale == baseline
