@@ -32,7 +32,14 @@ def enroll(name="test-worker"):
     )
     assert response.status_code == 200
     body = response.json()
-    return body["worker"]["worker_id"], body["access_token"]
+    worker_id = body["worker"]["worker_id"]
+    approved = client.put(
+        f"/v1/workers/{worker_id}/approval",
+        headers={"X-QingCloud-Admin-Token": "test-admin-secret"},
+        json={"status": "approved", "note": "Approved by test fixture"},
+    )
+    assert approved.status_code == 200
+    return worker_id, body["access_token"]
 
 
 def test_registration_requires_enrollment_secret():
@@ -496,3 +503,71 @@ def test_invitation_expiry_is_bounded():
     headers = {"X-QingCloud-Admin-Token": "test-admin-secret"}
     assert client.post("/v1/invitations", headers=headers, json={"expires_in_hours": 0}).status_code == 422
     assert client.post("/v1/invitations", headers=headers, json={"expires_in_hours": 169}).status_code == 422
+
+ 
+
+def test_new_provider_is_pending_and_cannot_claim_until_approved():
+    registration = client.post(
+        "/v1/workers/register",
+        headers={"X-QingCloud-Enrollment-Token": "test-enrollment-secret"},
+        json={"name": "pending-provider", "cpu_cores": 4, "ram_mb": 8192},
+    )
+    assert registration.status_code == 200
+    worker_id = registration.json()["worker"]["worker_id"]
+    token = registration.json()["access_token"]
+    assert registration.json()["worker"]["approval_status"] == "pending"
+    job = client.post(
+        "/v1/jobs",
+        headers={"X-QingCloud-Admin-Token": "test-admin-secret"},
+        json={"kind": "diagnostic"},
+    ).json()
+    blocked = client.post(
+        f"/v1/workers/{worker_id}/claim",
+        headers={"X-QingCloud-Worker-Token": token},
+    )
+    assert blocked.status_code == 200
+    assert blocked.json() is None
+
+    approved = client.put(
+        f"/v1/workers/{worker_id}/approval",
+        headers={"X-QingCloud-Admin-Token": "test-admin-secret"},
+        json={"status": "approved", "note": "Hardware checked"},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["approval_status"] == "approved"
+    claimed = client.post(
+        f"/v1/workers/{worker_id}/claim",
+        headers={"X-QingCloud-Worker-Token": token},
+    )
+    assert claimed.json()["job_id"] == job["job_id"]
+
+
+def test_rejected_provider_cannot_claim_and_approval_changes_are_audited():
+    worker_id, token = enroll("reviewed-provider")
+    admin = {"X-QingCloud-Admin-Token": "test-admin-secret"}
+    rejected = client.put(
+        f"/v1/workers/{worker_id}/approval",
+        headers=admin,
+        json={"status": "rejected", "note": "Unverified host"},
+    )
+    assert rejected.status_code == 200
+    assert rejected.json()["approval_status"] == "rejected"
+    job = client.post("/v1/jobs", headers=admin, json={"kind": "diagnostic"}).json()
+    blocked = client.post(
+        f"/v1/workers/{worker_id}/claim",
+        headers={"X-QingCloud-Worker-Token": token},
+    )
+    assert blocked.status_code == 200
+    assert blocked.json() is None
+    history = client.get(f"/v1/workers/{worker_id}/approval-history", headers=admin)
+    assert history.status_code == 200
+    statuses = [(event["previous_status"], event["new_status"]) for event in history.json()["events"]]
+    assert ("pending", "approved") in statuses
+    assert ("approved", "rejected") in statuses
+
+
+def test_provider_approval_endpoints_require_admin_and_handle_missing_workers():
+    assert client.put("/v1/workers/missing/approval", json={"status": "approved"}).status_code == 401
+    admin = {"X-QingCloud-Admin-Token": "test-admin-secret"}
+    assert client.put("/v1/workers/missing/approval", headers=admin, json={"status": "approved"}).status_code == 404
+    assert client.get("/v1/workers/missing/approval-history", headers=admin).status_code == 404
