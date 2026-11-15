@@ -190,11 +190,18 @@ def provider_registry(
     entries = []
     for worker in workers.values():
         age = max(0.0, (current - worker.last_seen_at).total_seconds())
+        running = sum(1 for job in jobs.values() if job.state == JobState.running and job.assigned_worker_id == worker.worker_id)
         entries.append({
             "worker_id": worker.worker_id,
             "name": worker.name,
             "hostname": worker.hostname,
             "state": worker.state.value,
+            "approval_status": worker.approval_status.value,
+            "approval_updated_at": worker.approval_updated_at,
+            "approval_note": worker.approval_note,
+            "max_concurrent_jobs": worker.max_concurrent_jobs,
+            "running_jobs": running,
+            "available_slots": max(0, worker.max_concurrent_jobs - running),
             "last_seen_at": worker.last_seen_at,
             "heartbeat_age_seconds": round(age, 1),
             "cpu_cores": worker.cpu_cores,
