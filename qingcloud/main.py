@@ -7,7 +7,7 @@ from fastapi import FastAPI, Header, HTTPException
 
 from qingcloud.db import init_db, load_state, save_job, save_worker, save_worker_token
 from qingcloud.models import (
-    JobCompletion, JobCreate, JobHeartbeat, JobRecord,
+    DistributedSumCreate, JobCompletion, JobCreate, JobHeartbeat, JobRecord,
     WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration, WorkerState,
 )
 from qingcloud.scheduler import claim_next_job, recover_expired_jobs
@@ -125,6 +125,80 @@ def submit_job(data: JobCreate):
     save_job(record)
     return record
 
+
+
+@app.post("/v1/distributed/sum")
+def create_distributed_sum(data: DistributedSumCreate):
+    """Split an inclusive integer range into independently schedulable CPU jobs."""
+    if data.end < data.start:
+        raise HTTPException(status_code=422, detail="end must be greater than or equal to start")
+    total_count = data.end - data.start + 1
+    if total_count > 1_000_000:
+        raise HTTPException(status_code=422, detail="A distributed sum is limited to 1,000,000 integers")
+    task_id = str(uuid4())
+    chunk_ids = []
+    chunk_start = data.start
+    while chunk_start <= data.end:
+        chunk_end = min(chunk_start + data.chunk_size - 1, data.end)
+        record = JobRecord(
+            job_id=str(uuid4()),
+            task_id=task_id,
+            kind="sum_range",
+            payload={"start": chunk_start, "end": chunk_end},
+            max_attempts=2,
+        )
+        jobs[record.job_id] = record
+        save_job(record)
+        chunk_ids.append(record.job_id)
+        chunk_start = chunk_end + 1
+    return {
+        "task_id": task_id,
+        "kind": "distributed_sum",
+        "start": data.start,
+        "end": data.end,
+        "integer_count": total_count,
+        "chunk_count": len(chunk_ids),
+        "job_ids": chunk_ids,
+        "status": "queued",
+    }
+
+
+@app.get("/v1/distributed/sum/{task_id}")
+def get_distributed_sum(task_id: str):
+    task_jobs = [job for job in jobs.values() if job.task_id == task_id]
+    if not task_jobs:
+        raise HTTPException(status_code=404, detail="Distributed sum task not found")
+    failed = [job.job_id for job in task_jobs if job.state.value == "failed"]
+    pending = [job.job_id for job in task_jobs if job.state.value in ("queued", "running")]
+    invalid = []
+    total = 0
+    for job in task_jobs:
+        if job.state.value != "succeeded":
+            continue
+        start = job.payload.get("start")
+        end = job.payload.get("end")
+        expected = (start + end) * (end - start + 1) // 2
+        result = job.result or {}
+        if result.get("start") != start or result.get("end") != end or result.get("count") != end - start + 1 or result.get("sum") != expected:
+            invalid.append(job.job_id)
+        else:
+            total += expected
+    if failed or invalid:
+        status = "failed"
+    elif pending:
+        status = "running" if any(job.state.value == "running" for job in task_jobs) else "queued"
+    else:
+        status = "succeeded"
+    return {
+        "task_id": task_id,
+        "status": status,
+        "chunk_count": len(task_jobs),
+        "succeeded_chunks": sum(job.state.value == "succeeded" for job in task_jobs),
+        "pending_chunks": len(pending),
+        "failed_chunks": failed,
+        "invalid_chunks": invalid,
+        "total": total if status == "succeeded" else None,
+    }
 
 @app.get("/v1/jobs", response_model=list[JobRecord])
 def list_jobs():
