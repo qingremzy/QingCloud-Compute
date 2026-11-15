@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from uuid import uuid4
+from threading import RLock
 
 from fastapi import FastAPI, Header, HTTPException
 
@@ -25,6 +26,7 @@ app = FastAPI(
 workers: dict[str, WorkerRecord] = {}
 jobs: dict[str, JobRecord] = {}
 worker_token_hashes: dict[str, str] = {}
+claim_lock = RLock()
 
 init_db()
 load_state(workers, jobs, worker_token_hashes)
@@ -54,15 +56,20 @@ def health():
 @app.get("/v1/overview")
 def overview():
     gpu_vram_mb = sum(gpu.vram_mb for worker in workers.values() for gpu in worker.gpus)
+    online = [w for w in workers.values() if w.state.value == "online"]
     return {
         "workers": len(workers),
-        "online_workers": sum(w.state.value == "online" for w in workers.values()),
+        "online_workers": len(online),
+        "offline_workers": len(workers) - len(online),
+        "reported_cpu_cores_online": sum(w.cpu_cores for w in online),
+        "reported_ram_mb_online": sum(w.ram_mb for w in online),
+        "reported_gpu_count_online": sum(len(w.gpus) for w in online),
+        "reported_gpu_vram_mb_across_network": gpu_vram_mb,
         "jobs": len(jobs),
         "queued_jobs": sum(j.state.value == "queued" for j in jobs.values()),
         "running_jobs": sum(j.state.value == "running" for j in jobs.values()),
-        "reported_gpu_vram_mb_across_network": gpu_vram_mb,
         "storage": "sqlite",
-        "note": "Aggregate VRAM is inventory only; it is not one unified GPU memory pool.",
+        "note": "Hardware totals are reported inventory only. Aggregate VRAM is not one unified GPU memory pool, and reported capacity is not guaranteed available capacity.",
     }
 
 
@@ -221,13 +228,16 @@ def worker_claim(
 ):
     worker = authenticate_worker(worker_id, token)
     worker.last_seen_at = now()
-    for recovered_job in recover_expired_jobs(jobs, now()):
-        save_job(recovered_job)
-    claimed = claim_next_job(worker, jobs)
-    save_worker(worker)
-    if claimed:
-        save_job(claimed)
-    return claimed
+    # Serialize in-process claims so two API threads cannot take the same queued job.
+    # A multi-process deployment will still require a database-level atomic claim.
+    with claim_lock:
+        for recovered_job in recover_expired_jobs(jobs, now()):
+            save_job(recovered_job)
+        claimed = claim_next_job(worker, jobs)
+        save_worker(worker)
+        if claimed:
+            save_job(claimed)
+        return claimed
 
 
 @app.post("/v1/jobs/{job_id}/heartbeat")
