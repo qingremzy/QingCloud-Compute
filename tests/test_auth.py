@@ -130,3 +130,54 @@ def test_failed_job_is_requeued_until_attempt_limit():
     )
     assert final.status_code == 200
     assert final.json()["state"] == "failed"
+
+
+def test_distributed_sum_splits_jobs_and_aggregates_verified_results():
+    worker_id, token = enroll("sum-worker")
+    headers = {"X-QingCloud-Worker-Token": token}
+    created = client.post("/v1/distributed/sum", json={"start": 1, "end": 10, "chunk_size": 4})
+    assert created.status_code == 200
+    task = created.json()
+    assert task["chunk_count"] == 3
+    assert task["integer_count"] == 10
+
+    for _ in range(3):
+        claimed = client.post(f"/v1/workers/{worker_id}/claim", headers=headers).json()
+        assert claimed["kind"] == "sum_range"
+        start = claimed["payload"]["start"]
+        end = claimed["payload"]["end"]
+        result = {"start": start, "end": end, "count": end - start + 1,
+                  "sum": (start + end) * (end - start + 1) // 2}
+        completed = client.post(
+            f"/v1/jobs/{claimed['job_id']}/complete?worker_id={worker_id}",
+            headers=headers,
+            json={"success": True, "result": result},
+        )
+        assert completed.status_code == 200
+
+    status = client.get(f"/v1/distributed/sum/{task['task_id']}")
+    assert status.status_code == 200
+    assert status.json()["status"] == "succeeded"
+    assert status.json()["total"] == 55
+    assert status.json()["succeeded_chunks"] == 3
+
+
+def test_distributed_sum_rejects_invalid_or_excessive_ranges():
+    assert client.post("/v1/distributed/sum", json={"start": 10, "end": 1}).status_code == 422
+    assert client.post("/v1/distributed/sum", json={"start": 1, "end": 1000001}).status_code == 422
+
+
+def test_distributed_sum_rejects_worker_result_mismatch():
+    worker_id, token = enroll("unreliable-worker")
+    headers = {"X-QingCloud-Worker-Token": token}
+    task = client.post("/v1/distributed/sum", json={"start": 1, "end": 5, "chunk_size": 5}).json()
+    claimed = client.post(f"/v1/workers/{worker_id}/claim", headers=headers).json()
+    client.post(
+        f"/v1/jobs/{claimed['job_id']}/complete?worker_id={worker_id}",
+        headers=headers,
+        json={"success": True, "result": {"start": 1, "end": 5, "count": 5, "sum": 999}},
+    )
+    status = client.get(f"/v1/distributed/sum/{task['task_id']}")
+    assert status.json()["status"] == "failed"
+    assert status.json()["total"] is None
+    assert status.json()["invalid_chunks"] == [claimed["job_id"]]
