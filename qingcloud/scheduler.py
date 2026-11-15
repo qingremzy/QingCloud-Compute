@@ -9,7 +9,7 @@ def worker_can_run(worker: WorkerRecord, job: JobRecord) -> bool:
     if worker.state.value != "online":
         return False
     if job.required_gpu_vram_mb:
-        available = max((gpu.vram_mb for gpu in worker.gpus), default=0)
+        available = max((gpu.free_vram_mb if gpu.free_vram_mb is not None else gpu.vram_mb for gpu in worker.gpus), default=0)
         if available < job.required_gpu_vram_mb:
             return False
     return all(worker.labels.get(key) == value for key, value in job.required_labels.items())
