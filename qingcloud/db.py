@@ -44,6 +44,17 @@ def init_db() -> None:
         """)
         _CONNECTION.execute("CREATE INDEX IF NOT EXISTS idx_gpu_events_worker ON gpu_events(worker_id, event_id DESC)")
         _CONNECTION.execute("""
+            CREATE TABLE IF NOT EXISTS worker_job_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT NOT NULL,
+                worker_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                attempt INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+        _CONNECTION.execute("CREATE INDEX IF NOT EXISTS idx_worker_job_events_worker ON worker_job_events(worker_id, event_id DESC)")
+        _CONNECTION.execute("""
             CREATE TABLE IF NOT EXISTS worker_tokens (
                 worker_id TEXT PRIMARY KEY,
                 token_hash TEXT NOT NULL,
@@ -90,6 +101,37 @@ def list_gpu_events(worker_id: str, limit: int = 50) -> list[dict[str, Any]]:
         "event_type": row["event_type"], "created_at": row["created_at"],
         "before": json.loads(row["before_json"]), "after": json.loads(row["after_json"]),
     } for row in rows]
+
+
+def record_worker_job_event(job_id: str, worker_id: str, event_type: str, attempt: int, created_at: datetime | None = None) -> None:
+    if event_type not in {"succeeded", "failed"}:
+        raise ValueError("Unsupported worker job event type")
+    stamp = (created_at or datetime.now(timezone.utc)).isoformat()
+    with _LOCK, _CONNECTION:
+        _CONNECTION.execute(
+            "INSERT INTO worker_job_events(job_id, worker_id, event_type, attempt, created_at) VALUES(?, ?, ?, ?, ?)",
+            (job_id, worker_id, event_type, attempt, stamp),
+        )
+
+
+def worker_reliability_stats(worker_id: str) -> dict[str, Any]:
+    with _LOCK:
+        row = _CONNECTION.execute(
+            "SELECT COUNT(*) AS total, SUM(CASE WHEN event_type='succeeded' THEN 1 ELSE 0 END) AS succeeded, SUM(CASE WHEN event_type='failed' THEN 1 ELSE 0 END) AS failed, MAX(created_at) AS last_completed_at FROM worker_job_events WHERE worker_id = ? AND event_type IN ('succeeded', 'failed')",
+            (worker_id,),
+        ).fetchone()
+    total = int(row["total"] or 0)
+    succeeded = int(row["succeeded"] or 0)
+    failed = int(row["failed"] or 0)
+    if total == 0:
+        return {"status": "unrated", "score": None, "sample_size": 0, "succeeded": 0, "failed": 0, "observed_success_rate": None, "last_completed_at": None}
+    score = round((succeeded + 1) / (total + 2) * 100, 1)
+    return {
+        "status": "limited_data" if total < 10 else "established",
+        "score": score, "sample_size": total, "succeeded": succeeded, "failed": failed,
+        "observed_success_rate": round(succeeded / total * 100, 1),
+        "last_completed_at": row["last_completed_at"],
+    }
 
 
 def save_worker_token(worker_id: str, token_hash: str) -> None:
@@ -157,6 +199,10 @@ def claim_job_atomic(worker: WorkerRecord, jobs: dict[str, JobRecord]) -> JobRec
             )
             if cursor.rowcount != 1:
                 raise RuntimeError("Atomic job claim did not update exactly one row")
+            _CONNECTION.execute(
+                "INSERT INTO worker_job_events(job_id, worker_id, event_type, attempt, created_at) VALUES(?, ?, 'claimed', ?, ?)",
+                (claimed.job_id, worker.worker_id, claimed.attempts, claimed.updated_at.isoformat()),
+            )
             _CONNECTION.commit()
             jobs[claimed.job_id] = claimed
             return claimed
