@@ -25,27 +25,28 @@ def detect_gpus() -> list[dict[str, Any]]:
     devices: list[dict[str, Any]] = []
     output = _run([
         "nvidia-smi",
-        "--query-gpu=name,memory.total,memory.free,utilization.gpu,driver_version,compute_cap",
+        "--query-gpu=index,name,memory.total,memory.free,utilization.gpu,driver_version,compute_cap",
         "--format=csv,noheader,nounits",
     ])
     for row in csv.reader(output.splitlines(), skipinitialspace=True):
-        if len(row) < 2:
+        if len(row) < 3:
             continue
         try:
             device: dict[str, Any] = {
-                "name": row[0].strip(),
+                "device_index": int(row[0].strip()),
+                "name": row[1].strip(),
                 "vendor": "NVIDIA",
-                "vram_mb": max(0, int(float(row[1].strip()))),
+                "vram_mb": max(0, int(float(row[2].strip()))),
                 "runtime": "CUDA",
             }
-            if len(row) > 2 and row[2].strip().lower() not in ("", "[n/a]", "n/a"):
-                device["free_vram_mb"] = max(0, int(float(row[2].strip())))
             if len(row) > 3 and row[3].strip().lower() not in ("", "[n/a]", "n/a"):
-                device["utilization_percent"] = min(100.0, max(0.0, float(row[3].strip())))
-            if len(row) > 4 and row[4].strip():
-                device["driver_version"] = row[4].strip()
-            if len(row) > 5 and row[5].strip().lower() not in ("", "[n/a]", "n/a"):
-                device["compute_capability"] = row[5].strip()
+                device["free_vram_mb"] = max(0, int(float(row[3].strip())))
+            if len(row) > 4 and row[4].strip().lower() not in ("", "[n/a]", "n/a"):
+                device["utilization_percent"] = min(100.0, max(0.0, float(row[4].strip())))
+            if len(row) > 5 and row[5].strip():
+                device["driver_version"] = row[5].strip()
+            if len(row) > 6 and row[6].strip().lower() not in ("", "[n/a]", "n/a"):
+                device["compute_capability"] = row[6].strip()
             devices.append(device)
         except (ValueError, IndexError):
             continue
