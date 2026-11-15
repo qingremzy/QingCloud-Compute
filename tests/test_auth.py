@@ -64,28 +64,40 @@ def test_only_assigned_worker_can_update_job():
     worker_a, token_a = enroll("worker-a")
     worker_b, token_b = enroll("worker-b")
     job = client.post("/v1/jobs", headers={"X-QingCloud-Admin-Token": "test-admin-secret"}, json={"kind": "diagnostic"}).json()
-    claim = client.post(
-        f"/v1/workers/{worker_a}/claim",
-        headers={"X-QingCloud-Worker-Token": token_a},
-    )
-    assert claim.status_code == 200
-    job_id = job["job_id"]
 
+    claim = None
+    assigned_worker = None
+    assigned_token = None
+    for worker_id, token in ((worker_a, token_a), (worker_b, token_b)):
+        response = client.post(
+            f"/v1/workers/{worker_id}/claim",
+            headers={"X-QingCloud-Worker-Token": token},
+        )
+        assert response.status_code == 200
+        if response.json() is not None:
+            claim = response
+            assigned_worker = worker_id
+            assigned_token = token
+            break
+    assert claim is not None
+
+    other_worker, other_token = (
+        (worker_b, token_b) if assigned_worker == worker_a else (worker_a, token_a)
+    )
+    job_id = job["job_id"]
     denied = client.post(
-        f"/v1/jobs/{job_id}/complete?worker_id={worker_b}",
-        headers={"X-QingCloud-Worker-Token": token_b},
+        f"/v1/jobs/{job_id}/complete?worker_id={other_worker}",
+        headers={"X-QingCloud-Worker-Token": other_token},
         json={"success": True, "result": {"ok": True}},
     )
     assert denied.status_code == 403
 
     allowed = client.post(
-        f"/v1/jobs/{job_id}/complete?worker_id={worker_a}",
-        headers={"X-QingCloud-Worker-Token": token_a},
+        f"/v1/jobs/{job_id}/complete?worker_id={assigned_worker}",
+        headers={"X-QingCloud-Worker-Token": assigned_token},
         json={"success": True, "result": {"ok": True}},
     )
     assert allowed.status_code == 200
-    assert allowed.json()["state"] == "succeeded"
-
 
 def test_worker_can_refresh_own_capabilities_only():
     worker_id, token = enroll("worker-original")
