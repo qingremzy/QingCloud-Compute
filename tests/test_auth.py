@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 
 from qingcloud.main import app, workers, jobs, worker_token_hashes
-from qingcloud.db import clear_all, invitation_token_hash_exists, create_worker_invitation
+from qingcloud.db import clear_all, invitation_token_hash_exists, create_worker_invitation, save_job, load_state, recover_expired_jobs_persisted
 from qingcloud.security import hash_worker_token
 
 client = TestClient(app)
@@ -746,3 +746,42 @@ def test_gpu_provider_ranking_uses_headroom_after_existing_reservations():
     assert claim_b.status_code == 200
     assert claim_b.json()["job_id"] == next_job["job_id"]
     assert claim_b.json()["assigned_worker_id"] == worker_b
+
+
+def test_expired_gpu_lease_is_recovered_and_reservation_persisted_as_released():
+    worker_id, token = enroll("restart-recovery-provider")
+    worker_headers = {"X-QingCloud-Worker-Token": token}
+    admin = {"X-QingCloud-Admin-Token": "test-admin-secret"}
+    updated = client.put(
+        f"/v1/workers/{worker_id}/capabilities",
+        headers=worker_headers,
+        json={"name": "restart-recovery-provider", "cpu_cores": 4, "ram_mb": 8192,
+              "gpus": [{"device_index": 0, "name": "GPU-R", "vram_mb": 12000, "free_vram_mb": 10000}]},
+    )
+    assert updated.status_code == 200
+    created = client.post(
+        "/v1/jobs", headers=admin,
+        json={"kind": "diagnostic", "required_gpu_vram_mb": 8000, "max_attempts": 2},
+    ).json()
+    claimed = client.post(f"/v1/workers/{worker_id}/claim", headers=worker_headers).json()
+    assert claimed["job_id"] == created["job_id"]
+    assert claimed["reserved_gpu_vram_mb"] == 8000
+
+    # Simulate a coordinator restart after the worker lease has expired.
+    from qingcloud.main import jobs
+    jobs[created["job_id"]].updated_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+    save_job(jobs[created["job_id"]])
+
+    recovered = recover_expired_jobs_persisted(jobs, datetime.now(timezone.utc))
+    assert len(recovered) == 1
+    assert recovered[0].state.value == "queued"
+    assert recovered[0].assigned_worker_id is None
+    assert recovered[0].assigned_gpu_index is None
+    assert recovered[0].reserved_gpu_vram_mb == 0
+
+    persisted_jobs = {}
+    load_state({}, persisted_jobs, {})
+    persisted = persisted_jobs[created["job_id"]]
+    assert persisted.state.value == "queued"
+    assert persisted.reserved_gpu_vram_mb == 0
+    assert persisted.assigned_gpu_index is None
