@@ -316,3 +316,60 @@ def test_gpu_history_returns_not_found_for_unknown_worker():
         headers={"X-QingCloud-Admin-Token": "test-admin-secret"},
     )
     assert response.status_code == 404
+
+
+def test_worker_reliability_counts_attempt_outcomes_without_inflating_claims():
+    worker_id, token = enroll("reliability-worker")
+    endpoint = f"/v1/workers/{worker_id}/reliability"
+    assert client.get(endpoint).status_code == 401
+    headers = {"X-QingCloud-Worker-Token": token}
+    admin = {"X-QingCloud-Admin-Token": "test-admin-secret"}
+    initial = client.get(endpoint, headers=admin).json()
+    assert initial["status"] == "unrated"
+    assert initial["score"] is None
+    assert initial["sample_size"] == 0
+
+    job = client.post("/v1/jobs", headers=admin, json={"kind": "echo", "max_attempts": 2}).json()
+    claimed = client.post(f"/v1/workers/{worker_id}/claim", headers=headers).json()
+    assert claimed["job_id"] == job["job_id"]
+    # A claim alone is not a success or failure.
+    after_claim = client.get(endpoint, headers=admin).json()
+    assert after_claim["sample_size"] == 0
+
+    failed = client.post(
+        f"/v1/jobs/{job['job_id']}/complete?worker_id={worker_id}",
+        headers=headers, json={"success": False, "error": "temporary"},
+    )
+    assert failed.status_code == 200
+    second = client.post(f"/v1/workers/{worker_id}/claim", headers=headers).json()
+    assert second["attempts"] == 2
+    succeeded = client.post(
+        f"/v1/jobs/{job['job_id']}/complete?worker_id={worker_id}",
+        headers=headers, json={"success": True, "result": {"ok": True}},
+    )
+    assert succeeded.status_code == 200
+
+    result = client.get(endpoint, headers=admin)
+    assert result.status_code == 200
+    body = result.json()
+    assert body["status"] == "limited_data"
+    assert body["sample_size"] == 2
+    assert body["succeeded"] == 1
+    assert body["failed"] == 1
+    assert body["observed_success_rate"] == 50.0
+    assert body["score"] == 50.0
+
+
+def test_worker_reliability_returns_not_found_for_unknown_worker():
+    response = client.get(
+        "/v1/workers/missing/reliability",
+        headers={"X-QingCloud-Admin-Token": "test-admin-secret"},
+    )
+    assert response.status_code == 404
+
+
+def test_dashboard_includes_unrated_worker_reliability():
+    worker_id, _ = enroll("unrated-worker")
+    response = client.get("/v1/dashboard", headers={"X-QingCloud-Admin-Token": "test-admin-secret"})
+    assert response.status_code == 200
+    assert response.json()["workers"][0]["reliability"]["status"] == "unrated"
