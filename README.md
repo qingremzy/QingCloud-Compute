@@ -58,7 +58,7 @@ NVIDIA inventory is read through nvidia-smi. AMD ROCm product-name detection is 
 
 ## Safety and limitations
 
-This remains a development prototype. Job submission and read-only endpoints are not yet authenticated, and job claims are serialized within one API process, but multiple concurrent server processes are not yet safe because claiming is not protected by a database-level transaction. Do not expose it publicly. Do not execute arbitrary user-supplied code on worker machines. Workers need a sandbox, resource limits, transport security, and stronger API authorization before production use.
+This remains a development prototype. Job submission and read-only endpoints are not yet authenticated, and job claims use SQLite BEGIN IMMEDIATE transactions, preventing duplicate claims across API processes that share the same SQLite database file on one host. A multi-host coordinator still needs a networked transactional database and durable queue. Do not expose it publicly. Do not execute arbitrary user-supplied code on worker machines. Workers need a sandbox, resource limits, transport security, and stronger API authorization before production use.
 
 SQLite persistence is local to the machine running the control plane. It does not provide 100 GB of shared storage or GPU capacity. Actual GPU resources must come from real enrolled machines.
 
