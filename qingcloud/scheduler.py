@@ -107,3 +107,15 @@ def recover_expired_jobs(jobs: dict[str, JobRecord], current_time: datetime | No
             job.error = "Worker lease expired after maximum attempts."
         recovered.append(job)
     return recovered
+
+
+def reconcile_worker_presence(workers: dict[str, WorkerRecord], current_time: datetime | None = None, stale_after_seconds: int = 120) -> list[WorkerRecord]:
+    """Mark workers offline when authenticated heartbeat freshness expires."""
+    current_time = current_time or datetime.now(timezone.utc)
+    changed = []
+    for worker in workers.values():
+        stale = current_time - worker.last_seen_at > timedelta(seconds=stale_after_seconds)
+        if stale and worker.state == worker.state.__class__.online:
+            worker.state = worker.state.__class__.offline
+            changed.append(worker)
+    return changed
