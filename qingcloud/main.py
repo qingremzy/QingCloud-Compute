@@ -10,7 +10,7 @@ from qingcloud.models import (
     JobCompletion, JobCreate, JobHeartbeat, JobRecord,
     WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration, WorkerState,
 )
-from qingcloud.scheduler import claim_next_job
+from qingcloud.scheduler import claim_next_job, recover_expired_jobs
 from qingcloud.security import (
     hash_worker_token, issue_worker_token, require_worker_token,
     verify_enrollment_token,
@@ -146,6 +146,8 @@ def worker_claim(
 ):
     worker = authenticate_worker(worker_id, token)
     worker.last_seen_at = now()
+    for recovered_job in recover_expired_jobs(jobs, now()):
+        save_job(recovered_job)
     claimed = claim_next_job(worker, jobs)
     save_worker(worker)
     if claimed:
@@ -185,10 +187,20 @@ def complete_job(
         raise HTTPException(status_code=404, detail="Job not found")
     if job.state.value != "running" or job.assigned_worker_id != worker_id:
         raise HTTPException(status_code=403, detail="Job is not assigned to this worker")
-    job.state = "succeeded" if data.success else "failed"
-    job.result = data.result if data.success else None
-    job.error = data.error if not data.success else None
-    job.progress = 100 if data.success else job.progress
+    if data.success:
+        job.state = "succeeded"
+        job.result = data.result
+        job.error = None
+        job.progress = 100
+    else:
+        job.result = None
+        job.error = data.error or "Worker reported an unsuccessful attempt"
+        if job.attempts < job.max_attempts:
+            job.state = "queued"
+            job.assigned_worker_id = None
+            job.progress = 0
+        else:
+            job.state = "failed"
     job.updated_at = now()
     save_job(job)
     return job
