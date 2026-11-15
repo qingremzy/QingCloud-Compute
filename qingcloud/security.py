@@ -37,3 +37,15 @@ def require_worker_token(
         raise HTTPException(status_code=401, detail="Worker authentication required")
     if not hmac.compare_digest(hash_worker_token(token), stored_hash):
         raise HTTPException(status_code=401, detail="Invalid worker token")
+
+
+def verify_admin_token(provided: str | None) -> None:
+    """Require the coordinator's admin API token for job submission and inspection."""
+    expected = os.getenv("QCLOUD_ADMIN_TOKEN")
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="Admin API is disabled. Configure QCLOUD_ADMIN_TOKEN.",
+        )
+    if not provided or not hmac.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="Invalid or missing admin token")
