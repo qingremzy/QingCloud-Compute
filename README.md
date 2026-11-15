@@ -73,6 +73,15 @@ The admin-only `GET /v1/providers` endpoint lists enrolled providers with heartb
 
 The admin-only `GET /v1/workers/{worker_id}/reliability` endpoint reports a coordinator-derived reliability estimate. Each authenticated job completion records an outcome against the worker that actually completed that attempt, including failed attempts that are later retried. Claims and unfinished/abandoned attempts do not count as outcomes. Workers with no completed outcomes are `unrated`, not penalized. The score uses a small Laplace prior to avoid treating one success as perfect reliability: (successes + 1) / (completed outcomes + 2). Samples below 10 outcomes are marked `limited_data`, and 10 or more are `established`. The dashboard shows the score and sample size. This is an operational signal, not a guarantee of future performance or a public reputation ranking.
 
+
+## Controlled provider invitations
+
+Administrators can issue a one-time provider invitation with the admin-authenticated `POST /v1/invitations` endpoint. The request accepts `expires_in_hours` from 1 to 168 (default 24). The response contains a random invitation token and expiry timestamp. The plaintext token is returned once. QingCloud stores only its SHA-256 hash.
+
+A provider enrolls with `POST /v1/workers/register` using the `X-QingCloud-Invitation-Token` header instead of the shared enrollment header. Each invitation can enroll exactly one worker and is rejected after expiry or redemption. Existing `X-QingCloud-Enrollment-Token` enrollment remains available for deployments that configure `QCLOUD_ENROLLMENT_TOKEN`.
+
+Keep invitation tokens private and transmit them only over HTTPS when connecting remotely. An invitation authorizes enrollment only. It does not grant admin access or make arbitrary workload execution safe.
+
 ## Safety and limitations
 
 This remains a development prototype. Worker registration and worker operations use their dedicated tokens. Job submission and job/task inspection require the coordinator admin token. The worker listing, overview, and dashboard endpoints also require the admin token. Job claims use SQLite BEGIN IMMEDIATE transactions, preventing duplicate claims across API processes that share the same SQLite database file on one host. A multi-host coordinator still needs a networked transactional database and durable queue. Do not expose it publicly. Do not execute arbitrary user-supplied code on worker machines. Workers need a sandbox, resource limits, transport security, and stronger API authorization before production use.
