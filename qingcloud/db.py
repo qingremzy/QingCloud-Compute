@@ -290,8 +290,9 @@ def claim_job_atomic(worker: WorkerRecord, jobs: dict[str, JobRecord], workers: 
                     ranking_workers.append(item.model_copy(update={"gpus": effective_gpus}))
 
                 reliability = {item.worker_id: worker_reliability_stats(item.worker_id) for item in eligible_workers}
+                telemetry = {item.worker_id: latest_worker_telemetry(item.worker_id) or {} for item in eligible_workers}
                 for candidate in candidates:
-                    ranking = rank_workers_for_job(candidate, ranking_workers, running_counts, reliability)
+                    ranking = rank_workers_for_job(candidate, ranking_workers, running_counts, reliability, telemetry)
                     if ranking and ranking[0]["worker_id"] == worker.worker_id:
                         claimed = candidate
                         break
