@@ -7,7 +7,7 @@ from fastapi import FastAPI, Header, HTTPException
 
 from qingcloud.db import init_db, load_state, save_job, save_worker, save_worker_token
 from qingcloud.models import (
-    DistributedSumCreate, JobCompletion, JobCreate, JobHeartbeat, JobRecord,
+    DistributedSumCreate, JobCompletion, JobCreate, JobHeartbeat, JobRecord, JobState,
     WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration, WorkerState,
 )
 from qingcloud.scheduler import claim_next_job, recover_expired_jobs
@@ -112,7 +112,7 @@ def update_worker_capabilities(
     for field in WorkerRegistration.model_fields:
         setattr(worker, field, getattr(normalized, field))
     worker.last_seen_at = now()
-    worker.state = "online"
+    worker.state = WorkerState.online
     save_worker(worker)
     return worker
 
@@ -168,12 +168,13 @@ def get_distributed_sum(task_id: str):
     task_jobs = [job for job in jobs.values() if job.task_id == task_id]
     if not task_jobs:
         raise HTTPException(status_code=404, detail="Distributed sum task not found")
-    failed = [job.job_id for job in task_jobs if job.state.value == "failed"]
-    pending = [job.job_id for job in task_jobs if job.state.value in ("queued", "running")]
+    state_of = lambda job: job.state.value if isinstance(job.state, JobState) else str(job.state)
+    failed = [job.job_id for job in task_jobs if state_of(job) == "failed"]
+    pending = [job.job_id for job in task_jobs if state_of(job) in ("queued", "running")]
     invalid = []
     total = 0
     for job in task_jobs:
-        if job.state.value != "succeeded":
+        if state_of(job) != "succeeded":
             continue
         start = job.payload.get("start")
         end = job.payload.get("end")
@@ -186,14 +187,14 @@ def get_distributed_sum(task_id: str):
     if failed or invalid:
         status = "failed"
     elif pending:
-        status = "running" if any(job.state.value == "running" for job in task_jobs) else "queued"
+        status = "running" if any(state_of(job) == "running" for job in task_jobs) else "queued"
     else:
         status = "succeeded"
     return {
         "task_id": task_id,
         "status": status,
         "chunk_count": len(task_jobs),
-        "succeeded_chunks": sum(job.state.value == "succeeded" for job in task_jobs),
+        "succeeded_chunks": sum(state_of(job) == "succeeded" for job in task_jobs),
         "pending_chunks": len(pending),
         "failed_chunks": failed,
         "invalid_chunks": invalid,
@@ -262,7 +263,7 @@ def complete_job(
     if job.state.value != "running" or job.assigned_worker_id != worker_id:
         raise HTTPException(status_code=403, detail="Job is not assigned to this worker")
     if data.success:
-        job.state = "succeeded"
+        job.state = JobState.succeeded
         job.result = data.result
         job.error = None
         job.progress = 100
@@ -270,11 +271,11 @@ def complete_job(
         job.result = None
         job.error = data.error or "Worker reported an unsuccessful attempt"
         if job.attempts < job.max_attempts:
-            job.state = "queued"
+            job.state = JobState.queued
             job.assigned_worker_id = None
             job.progress = 0
         else:
-            job.state = "failed"
+            job.state = JobState.failed
     job.updated_at = now()
     save_job(job)
     return job
