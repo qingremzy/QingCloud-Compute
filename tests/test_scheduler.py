@@ -41,3 +41,42 @@ def test_scheduler_claims_compatible_job():
     assert claimed is job
     assert claimed.assigned_worker_id == worker.worker_id
     assert claimed.attempts == 1
+
+
+from datetime import datetime, timedelta, timezone
+from qingcloud.models import JobState
+from qingcloud.scheduler import recover_expired_jobs
+
+
+def test_expired_job_is_requeued_when_attempts_remain():
+    job = make_job()
+    job.state = JobState.running
+    job.assigned_worker_id = "worker-old"
+    job.attempts = 1
+    job.updated_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+    recovered = recover_expired_jobs({job.job_id: job}, lease_seconds=60)
+    assert recovered == [job]
+    assert job.state == JobState.queued
+    assert job.assigned_worker_id is None
+    assert job.progress == 0
+
+
+def test_expired_job_fails_after_max_attempts():
+    job = make_job()
+    job.max_attempts = 1
+    job.state = JobState.running
+    job.assigned_worker_id = "worker-old"
+    job.attempts = 1
+    job.updated_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+    recover_expired_jobs({job.job_id: job}, lease_seconds=60)
+    assert job.state == JobState.failed
+    assert job.assigned_worker_id is None
+
+
+def test_live_job_lease_is_not_recovered():
+    job = make_job()
+    job.state = JobState.running
+    job.assigned_worker_id = "worker-live"
+    job.updated_at = datetime.now(timezone.utc)
+    assert recover_expired_jobs({job.job_id: job}, lease_seconds=180) == []
+    assert job.state == JobState.running
