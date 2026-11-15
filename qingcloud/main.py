@@ -14,7 +14,7 @@ from qingcloud.models import (
 from qingcloud.scheduler import recover_expired_jobs
 from qingcloud.security import (
     hash_worker_token, issue_worker_token, require_worker_token,
-    verify_enrollment_token,
+    verify_enrollment_token, verify_admin_token,
 )
 
 app = FastAPI(
@@ -125,7 +125,11 @@ def update_worker_capabilities(
 
 
 @app.post("/v1/jobs", response_model=JobRecord)
-def submit_job(data: JobCreate):
+def submit_job(
+    data: JobCreate,
+    admin_token: str | None = Header(default=None, alias="X-QingCloud-Admin-Token"),
+):
+    verify_admin_token(admin_token)
     job_id = str(uuid4())
     record = JobRecord(**data.model_dump(), job_id=job_id)
     jobs[job_id] = record
@@ -135,7 +139,11 @@ def submit_job(data: JobCreate):
 
 
 @app.post("/v1/distributed/sum")
-def create_distributed_sum(data: DistributedSumCreate):
+def create_distributed_sum(
+    data: DistributedSumCreate,
+    admin_token: str | None = Header(default=None, alias="X-QingCloud-Admin-Token"),
+):
+    verify_admin_token(admin_token)
     """Split an inclusive integer range into independently schedulable CPU jobs."""
     if data.end < data.start:
         raise HTTPException(status_code=422, detail="end must be greater than or equal to start")
@@ -171,7 +179,11 @@ def create_distributed_sum(data: DistributedSumCreate):
 
 
 @app.get("/v1/distributed/sum/{task_id}")
-def get_distributed_sum(task_id: str):
+def get_distributed_sum(
+    task_id: str,
+    admin_token: str | None = Header(default=None, alias="X-QingCloud-Admin-Token"),
+):
+    verify_admin_token(admin_token)
     task_jobs = [job for job in jobs.values() if job.task_id == task_id]
     if not task_jobs:
         raise HTTPException(status_code=404, detail="Distributed sum task not found")
@@ -209,12 +221,19 @@ def get_distributed_sum(task_id: str):
     }
 
 @app.get("/v1/jobs", response_model=list[JobRecord])
-def list_jobs():
+def list_jobs(
+    admin_token: str | None = Header(default=None, alias="X-QingCloud-Admin-Token"),
+):
+    verify_admin_token(admin_token)
     return list(jobs.values())
 
 
 @app.get("/v1/jobs/{job_id}", response_model=JobRecord)
-def get_job(job_id: str):
+def get_job(
+    job_id: str,
+    admin_token: str | None = Header(default=None, alias="X-QingCloud-Admin-Token"),
+):
+    verify_admin_token(admin_token)
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
