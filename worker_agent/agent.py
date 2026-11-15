@@ -3,6 +3,8 @@ import argparse, json, os, platform, subprocess, sys, time, urllib.error, urllib
 from pathlib import Path
 from typing import Any
 
+from worker_agent.runtime import execute_safe_job
+
 def _run(command: list[str], timeout: int = 8) -> str:
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
@@ -108,7 +110,23 @@ def send_heartbeat(base_url: str, config: dict[str, str]) -> dict[str, Any]:
     return request_json(base_url, "/v1/workers/" + config["worker_id"] + "/heartbeat", "POST",
         headers={"X-QingCloud-Worker-Token": config["access_token"]})
 
-def run_agent(base_url: str, config_path: Path, interval: int, once: bool = False) -> None:
+
+def claim_one_job(base_url: str, config: dict[str, str]) -> bool:
+    headers = {"X-QingCloud-Worker-Token": config["access_token"]}
+    worker_id = config["worker_id"]
+    job = request_json(base_url, "/v1/workers/" + worker_id + "/claim", "POST", headers=headers)
+    if not job:
+        return False
+    job_id = job["job_id"]
+    request_json(base_url, "/v1/jobs/" + job_id + "/heartbeat?worker_id=" + worker_id,
+        "POST", payload={"progress": 10, "message": "Validating approved built-in task"}, headers=headers)
+    success, result, error = execute_safe_job(job.get("kind", ""), job.get("payload") or {})
+    request_json(base_url, "/v1/jobs/" + job_id + "/complete?worker_id=" + worker_id,
+        "POST", payload={"success": success, "result": result, "error": error}, headers=headers)
+    print(json.dumps({"job_id": job_id, "job_kind": job.get("kind"), "success": success, "error": error}))
+    return True
+
+def run_agent(base_url: str, config_path: Path, interval: int, once: bool = False, enable_jobs: bool = False) -> None:
     if not base_url.startswith("https://") and not base_url.startswith(("http://127.0.0.1", "http://localhost")):
         raise RuntimeError("Use HTTPS for remote servers. HTTP is allowed only on localhost.")
     enrollment_token = os.getenv("QCLOUD_ENROLLMENT_TOKEN", "")
@@ -124,6 +142,8 @@ def run_agent(base_url: str, config_path: Path, interval: int, once: bool = Fals
             "gpu_count": len(inventory.get("gpus", [])),
             "last_seen_at": result.get("last_seen_at"),
         }))
+        if enable_jobs:
+            claim_one_job(base_url, config)
         if once:
             return
         time.sleep(max(15, interval))
@@ -132,11 +152,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="QingCloud discovery-only worker agent. It does not execute jobs.")
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--interval", type=int, default=60)
+    parser.add_argument("--enable-jobs", action="store_true", help="Opt in to bounded built-in diagnostic, echo, and SHA-256 jobs")
     args = parser.parse_args()
     base_url = os.getenv("QCLOUD_URL", "http://127.0.0.1:8000")
     config_path = Path(os.getenv("QCLOUD_WORKER_CONFIG", str(Path.home() / ".qingcloud" / "worker.json")))
     try:
-        run_agent(base_url, config_path, args.interval, args.once)
+        run_agent(base_url, config_path, args.interval, args.once, args.enable_jobs)
     except (RuntimeError, OSError, ValueError, KeyError) as exc:
         print("QingCloud worker error: " + str(exc), file=sys.stderr)
         raise SystemExit(1)
