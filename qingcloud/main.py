@@ -100,6 +100,22 @@ def worker_heartbeat(
     return {"ok": True, "last_seen_at": worker.last_seen_at}
 
 
+@app.put("/v1/workers/{worker_id}/capabilities", response_model=WorkerRecord)
+def update_worker_capabilities(
+    worker_id: str,
+    data: WorkerRegistration,
+    token: str | None = Header(default=None, alias="X-QingCloud-Worker-Token"),
+):
+    """Refresh a worker's self-reported hardware inventory using its own token."""
+    worker = authenticate_worker(worker_id, token)
+    for field, value in data.model_dump().items():
+        setattr(worker, field, value)
+    worker.last_seen_at = now()
+    worker.state = "online"
+    save_worker(worker)
+    return worker
+
+
 @app.post("/v1/jobs", response_model=JobRecord)
 def submit_job(data: JobCreate):
     job_id = str(uuid4())
