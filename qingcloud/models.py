@@ -15,6 +15,12 @@ class WorkerState(str, Enum):
     offline = "offline"
 
 
+class WorkerApprovalStatus(str, Enum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
 class JobState(str, Enum):
     queued = "queued"
     running = "running"
@@ -50,6 +56,14 @@ class WorkerRecord(WorkerRegistration):
     registered_at: datetime = Field(default_factory=utcnow)
     last_seen_at: datetime = Field(default_factory=utcnow)
     capabilities_updated_at: datetime = Field(default_factory=utcnow)
+    approval_status: WorkerApprovalStatus = WorkerApprovalStatus.pending
+    approval_updated_at: datetime | None = None
+    approval_note: str | None = Field(default=None, max_length=500)
+
+
+class WorkerApprovalUpdate(BaseModel):
+    status: WorkerApprovalStatus
+    note: str | None = Field(default=None, max_length=500)
 
 
 class DistributedSumCreate(BaseModel):
