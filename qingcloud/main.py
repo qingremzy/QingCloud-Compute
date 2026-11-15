@@ -136,6 +136,8 @@ def dashboard(admin_token: str | None = Header(default=None, alias="X-QingCloud-
             "cpu_cores": worker.cpu_cores, "ram_mb": worker.ram_mb,
             "gpus": gpu_rows, "running_jobs": len(running),
             "reserved_gpu_vram_mb_total": sum(item["reserved_vram_mb"] for item in gpu_reservations.values()),
+            "reserved_cpu_cores_total": sum(item.reserved_cpu_cores for item in running),
+            "reserved_ram_mb_total": sum(item.reserved_ram_mb for item in running),
             "gpu_reservations": list(gpu_reservations.values()),
         })
     job_rows = [{
@@ -143,6 +145,7 @@ def dashboard(admin_token: str | None = Header(default=None, alias="X-QingCloud-
         "assigned_worker_id": job.assigned_worker_id, "assigned_gpu_index": job.assigned_gpu_index,
         "reserved_gpu_vram_mb": job.reserved_gpu_vram_mb, "required_gpu_vram_mb": job.required_gpu_vram_mb,
         "required_cpu_cores": job.required_cpu_cores, "required_ram_mb": job.required_ram_mb,
+        "reserved_cpu_cores": job.reserved_cpu_cores, "reserved_ram_mb": job.reserved_ram_mb,
         "attempts": job.attempts,
         "max_attempts": job.max_attempts, "progress": job.progress,
         "created_at": job.created_at, "updated_at": job.updated_at, "error": job.error,
