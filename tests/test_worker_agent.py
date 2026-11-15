@@ -43,3 +43,26 @@ def test_worker_batch_enforces_safe_job_limit(monkeypatch):
     import pytest
     with pytest.raises(ValueError):
         process_job_batch("http://localhost:8000", {"worker_id": "w-1"}, 17)
+
+
+
+def test_nvidia_detection_reports_live_memory_utilization_and_driver(monkeypatch):
+    output = "NVIDIA RTX 4090, 24564, 18000, 35, 555.42, 8.9"
+    monkeypatch.setattr("worker_agent.agent._run",
+        lambda command, timeout=8: output if command[0] == "nvidia-smi" else "")
+    gpu = detect_gpus()[0]
+    assert gpu["vram_mb"] == 24564
+    assert gpu["free_vram_mb"] == 18000
+    assert gpu["utilization_percent"] == 35.0
+    assert gpu["driver_version"] == "555.42"
+    assert gpu["compute_capability"] == "8.9"
+
+
+def test_nvidia_detection_handles_unknown_optional_telemetry(monkeypatch):
+    output = "NVIDIA GPU, 8192, [N/A], [N/A], 550.1, [N/A]"
+    monkeypatch.setattr("worker_agent.agent._run",
+        lambda command, timeout=8: output if command[0] == "nvidia-smi" else "")
+    gpu = detect_gpus()[0]
+    assert gpu["vram_mb"] == 8192
+    assert "free_vram_mb" not in gpu
+    assert "utilization_percent" not in gpu
