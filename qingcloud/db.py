@@ -8,7 +8,7 @@ from threading import RLock
 from typing import Any
 
 from qingcloud.models import JobRecord, JobState, WorkerRecord
-from qingcloud.scheduler import worker_can_run, rank_workers_for_job
+from qingcloud.scheduler import worker_can_run, rank_workers_for_job, recover_expired_jobs
 
 _DB_PATH = os.getenv("QCLOUD_DB_PATH", "qingcloud.sqlite3")
 _CONNECTION = sqlite3.connect(_DB_PATH, check_same_thread=False)
@@ -358,3 +358,38 @@ def list_worker_approval_events(worker_id: str, limit: int = 50) -> list[dict[st
             (worker_id, max(1, min(limit, 200))),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def recover_expired_jobs_persisted(
+    jobs: dict[str, JobRecord],
+    current_time: datetime | None = None,
+    lease_seconds: int = 180,
+) -> list[JobRecord]:
+    """Recover expired leases from SQLite atomically and persist released reservations.
+
+    This is safe to call during coordinator startup and before worker claims.
+    Only jobs whose persisted heartbeat/updated_at exceeds the lease are changed.
+    """
+    stamp = current_time or datetime.now(timezone.utc)
+    with _LOCK:
+        _CONNECTION.execute("BEGIN IMMEDIATE")
+        try:
+            rows = _CONNECTION.execute("SELECT job_id, data_json FROM jobs").fetchall()
+            persisted = {
+                job.job_id: job
+                for job in (JobRecord.model_validate_json(row["data_json"]) for row in rows)
+            }
+            recovered = recover_expired_jobs(persisted, stamp, lease_seconds)
+            for job in recovered:
+                cursor = _CONNECTION.execute(
+                    "UPDATE jobs SET data_json = ? WHERE job_id = ?",
+                    (job.model_dump_json(), job.job_id),
+                )
+                if cursor.rowcount != 1:
+                    raise RuntimeError("Expired job recovery did not update exactly one row")
+            _CONNECTION.commit()
+            jobs.update(persisted)
+            return recovered
+        except Exception:
+            _CONNECTION.rollback()
+            raise
