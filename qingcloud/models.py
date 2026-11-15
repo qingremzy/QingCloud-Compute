@@ -94,3 +94,7 @@ class WorkerEnrollmentResponse(BaseModel):
     worker: WorkerRecord
     access_token: str
     token_type: str = "Bearer"
+
+
+class WorkerInvitationCreate(BaseModel):
+    expires_in_hours: int = Field(default=24, ge=1, le=168)
