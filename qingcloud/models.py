@@ -99,6 +99,8 @@ class JobCreate(BaseModel):
     kind: str = Field(default="diagnostic", min_length=1, max_length=80)
     payload: dict[str, Any] = Field(default_factory=dict)
     required_gpu_vram_mb: int = Field(default=0, ge=0)
+    required_cpu_cores: int = Field(default=0, ge=0, le=256)
+    required_ram_mb: int = Field(default=0, ge=0, le=1048576)
     required_labels: dict[str, str] = Field(default_factory=dict)
     max_attempts: int = Field(default=2, ge=1, le=10)
 
