@@ -898,6 +898,6 @@ def test_atomic_claim_prefers_provider_with_more_live_cpu_and_ram_headroom():
     claim_b = client.post(f"/v1/workers/{worker_b}/claim",
         headers={"X-QingCloud-Worker-Token": token_b})
     assert claim_a.status_code == 200
-    assert claim_a.json().get("job") is None
+    assert claim_a.json() is None
     assert claim_b.status_code == 200
-    assert claim_b.json()["job"]["assigned_worker_id"] == worker_b
+    assert claim_b.json()["assigned_worker_id"] == worker_b
