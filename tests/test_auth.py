@@ -216,6 +216,14 @@ def test_two_workers_claim_distinct_chunks_and_complete_distributed_sum():
         headers={"X-QingCloud-Admin-Token": "test-admin-secret"},
         json={"start": 1, "end": 12, "chunk_size": 3},
     ).json()
+    admin_headers = {"X-QingCloud-Admin-Token": "test-admin-secret"}
+    for worker_id in (worker_a, worker_b):
+        capacity = client.put(
+            f"/v1/workers/{worker_id}/capacity",
+            headers=admin_headers,
+            json={"max_concurrent_jobs": 2},
+        )
+        assert capacity.status_code == 200
 
     # Intelligent scheduling may correctly return no job to a worker that is
     # not currently the highest-ranked candidate. Both workers poll until all
