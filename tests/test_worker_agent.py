@@ -1,4 +1,4 @@
-from worker_agent.agent import discover_worker, detect_gpus, process_job_batch
+from worker_agent.agent import discover_worker, detect_gpus, process_job_batch, resource_snapshot
 
 def test_discovery_reports_valid_cpu_and_ram(monkeypatch):
     monkeypatch.setattr("worker_agent.agent.memory_mb", lambda: 8192)
@@ -66,3 +66,24 @@ def test_nvidia_detection_handles_unknown_optional_telemetry(monkeypatch):
     assert gpu["vram_mb"] == 8192
     assert "free_vram_mb" not in gpu
     assert "utilization_percent" not in gpu
+
+
+def test_resource_snapshot_reports_cpu_ram_and_gpu_metrics(monkeypatch):
+    class Memory:
+        total = 8 * 1024 * 1024 * 1024
+        used = 3 * 1024 * 1024 * 1024
+        available = 5 * 1024 * 1024 * 1024
+        percent = 37.5
+    monkeypatch.setattr("worker_agent.agent.psutil.virtual_memory", lambda: Memory())
+    monkeypatch.setattr("worker_agent.agent.psutil.cpu_percent", lambda interval=0.1: 23.4)
+    monkeypatch.setattr("worker_agent.agent.detect_gpus", lambda: [
+        {"device_index": 0, "name": "Test GPU", "vram_mb": 8192,
+         "free_vram_mb": 4096, "utilization_percent": 55.0}
+    ])
+    data = resource_snapshot()
+    assert data["cpu_percent"] == 23.4
+    assert data["ram_total_mb"] == 8192
+    assert data["ram_used_mb"] == 3072
+    assert data["ram_available_mb"] == 5120
+    assert data["ram_percent"] == 37.5
+    assert data["gpus"][0]["utilization_percent"] == 55.0
