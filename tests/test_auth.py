@@ -12,6 +12,7 @@ def clean_state(monkeypatch):
     jobs.clear()
     worker_token_hashes.clear()
     monkeypatch.setenv("QCLOUD_ENROLLMENT_TOKEN", "test-enrollment-secret")
+    monkeypatch.setenv("QCLOUD_ADMIN_TOKEN", "test-admin-secret")
     yield
     workers.clear()
     jobs.clear()
@@ -57,7 +58,7 @@ def test_worker_heartbeat_requires_valid_token():
 def test_only_assigned_worker_can_update_job():
     worker_a, token_a = enroll("worker-a")
     worker_b, token_b = enroll("worker-b")
-    job = client.post("/v1/jobs", json={"kind": "diagnostic"}).json()
+    job = client.post("/v1/jobs", headers={"X-QingCloud-Admin-Token": "test-admin-secret"}, json={"kind": "diagnostic"}).json()
     claim = client.post(
         f"/v1/workers/{worker_a}/claim",
         headers={"X-QingCloud-Worker-Token": token_a},
@@ -106,7 +107,7 @@ def test_capability_refresh_requires_worker_token():
 
 def test_failed_job_is_requeued_until_attempt_limit():
     worker_id, token = enroll("retry-worker")
-    job = client.post("/v1/jobs", json={"kind": "echo", "max_attempts": 2}).json()
+    job = client.post("/v1/jobs", headers={"X-QingCloud-Admin-Token": "test-admin-secret"}, json={"kind": "echo", "max_attempts": 2}).json()
     headers = {"X-QingCloud-Worker-Token": token}
     first_claim = client.post(f"/v1/workers/{worker_id}/claim", headers=headers)
     assert first_claim.status_code == 200
@@ -135,7 +136,7 @@ def test_failed_job_is_requeued_until_attempt_limit():
 def test_distributed_sum_splits_jobs_and_aggregates_verified_results():
     worker_id, token = enroll("sum-worker")
     headers = {"X-QingCloud-Worker-Token": token}
-    created = client.post("/v1/distributed/sum", json={"start": 1, "end": 10, "chunk_size": 4})
+    created = client.post("/v1/distributed/sum", headers={"X-QingCloud-Admin-Token": "test-admin-secret"}, json={"start": 1, "end": 10, "chunk_size": 4})
     assert created.status_code == 200
     task = created.json()
     assert task["chunk_count"] == 3
@@ -163,14 +164,14 @@ def test_distributed_sum_splits_jobs_and_aggregates_verified_results():
 
 
 def test_distributed_sum_rejects_invalid_or_excessive_ranges():
-    assert client.post("/v1/distributed/sum", json={"start": 10, "end": 1}).status_code == 422
-    assert client.post("/v1/distributed/sum", json={"start": 1, "end": 1000001}).status_code == 422
+    assert client.post("/v1/distributed/sum", headers={"X-QingCloud-Admin-Token": "test-admin-secret"}, json={"start": 10, "end": 1}).status_code == 422
+    assert client.post("/v1/distributed/sum", headers={"X-QingCloud-Admin-Token": "test-admin-secret"}, json={"start": 1, "end": 1000001}).status_code == 422
 
 
 def test_distributed_sum_rejects_worker_result_mismatch():
     worker_id, token = enroll("unreliable-worker")
     headers = {"X-QingCloud-Worker-Token": token}
-    task = client.post("/v1/distributed/sum", json={"start": 1, "end": 5, "chunk_size": 5}).json()
+    task = client.post("/v1/distributed/sum", headers={"X-QingCloud-Admin-Token": "test-admin-secret"}, json={"start": 1, "end": 5, "chunk_size": 5}).json()
     claimed = client.post(f"/v1/workers/{worker_id}/claim", headers=headers).json()
     client.post(
         f"/v1/jobs/{claimed['job_id']}/complete?worker_id={worker_id}",
