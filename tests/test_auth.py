@@ -2,12 +2,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from qingcloud.main import app, workers, jobs, worker_token_hashes
+from qingcloud.db import clear_all
 
 client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
 def clean_state(monkeypatch):
+    clear_all()
     workers.clear()
     jobs.clear()
     worker_token_hashes.clear()
@@ -17,6 +19,7 @@ def clean_state(monkeypatch):
     workers.clear()
     jobs.clear()
     worker_token_hashes.clear()
+    clear_all()
 
 
 def enroll(name="test-worker"):
