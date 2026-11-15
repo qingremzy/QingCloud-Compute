@@ -216,9 +216,13 @@ def claim_job_atomic(worker: WorkerRecord, jobs: dict[str, JobRecord], workers: 
                 for item in persisted_jobs:
                     if item.state == JobState.running and item.assigned_worker_id:
                         running_counts[item.assigned_worker_id] = running_counts.get(item.assigned_worker_id, 0) + 1
-                reliability = {item.worker_id: worker_reliability_stats(item.worker_id) for item in online_workers}
+                eligible_workers = [
+                    item for item in online_workers
+                    if running_counts.get(item.worker_id, 0) < item.max_concurrent_jobs
+                ]
+                reliability = {item.worker_id: worker_reliability_stats(item.worker_id) for item in eligible_workers}
                 for candidate in candidates:
-                    ranking = rank_workers_for_job(candidate, online_workers, running_counts, reliability)
+                    ranking = rank_workers_for_job(candidate, eligible_workers, running_counts, reliability)
                     if ranking and ranking[0]["worker_id"] == worker.worker_id:
                         claimed = candidate
                         break
