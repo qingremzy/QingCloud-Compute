@@ -160,3 +160,8 @@ When a worker has a resource telemetry sample no older than 120 seconds, schedul
 ### Declared CPU and RAM workload requirements
 
 Job submissions can declare `required_cpu_cores` (0–256) and `required_ram_mb` (0–1,048,576). Zero preserves the backward-compatible unspecified requirement. Workers must report enough total CPU cores and RAM to meet the request. When a worker has a resource telemetry sample no older than 120 seconds, the scheduler also requires its reported currently available RAM to meet the job's RAM requirement. Stale or missing RAM samples fall back to reported total RAM. These are admission checks based on self-reported values, not reservations or OS-enforced isolation. Concurrent jobs can still compete for CPU and RAM, and the worker runtime remains limited to its allowlisted built-in tasks.
+
+
+### CPU and RAM reservation accounting
+
+When a job is claimed, its declared CPU-core and RAM requirements are recorded as scheduler reservations against that worker. Later claims subtract active reservations from reported CPU-core capacity and RAM capacity. Fresh RAM telemetry is also reduced by active RAM reservations before checking a new job. Reservations are released on job completion, retry/failure completion, or expired-lease recovery. The dashboard API reports active per-worker totals and per-job reservations. These are coordinator-side accounting estimates only: they do not pin CPU cores, allocate memory, prevent unrelated processes from using resources, or provide OS/container isolation. Providers and their telemetry are self-reported.
