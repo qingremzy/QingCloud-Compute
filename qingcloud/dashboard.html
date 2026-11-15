@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>QingCloud Compute · Control Room</title>
+<style>
+:root{color-scheme:dark;--bg:#090d16;--panel:#111827;--line:#263247;--muted:#94a3b8;--text:#edf3ff;--accent:#7cdbb3;--blue:#8bb8ff}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 10% 0%,#172b3c 0,transparent 42%),var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+main{max-width:1180px;margin:auto;padding:28px 18px 60px}.top{display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap}.brand{font-size:22px;font-weight:750;letter-spacing:-.5px}.brand span{color:var(--accent)}.sub,.muted{color:var(--muted)}.panel,.metric{background:#111827df;border:1px solid var(--line);border-radius:16px;padding:18px}.connect{margin:24px 0;display:flex;gap:10px;flex-wrap:wrap}.connect input{flex:1;min-width:220px;background:#080e19;border:1px solid var(--line);border-radius:10px;padding:12px;color:var(--text)}button{background:var(--accent);color:#082017;border:0;border-radius:10px;padding:11px 16px;font-weight:700;cursor:pointer}button.secondary{background:#1c2a3e;color:var(--text);border:1px solid var(--line)}.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:16px 0}.metric strong{display:block;font-size:27px}.metric small{color:var(--muted)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin:14px 0}.section{margin-top:24px}.section h2{font-size:17px}.row{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid #243044}.row:last-child{border:0}.pill{font-size:12px;border-radius:99px;padding:3px 9px;background:#233449;color:#b9d5ff}.online,.succeeded{color:var(--accent)}.offline,.failed{color:#ff9d9d}.tablewrap{overflow:auto}table{width:100%;border-collapse:collapse;min-width:600px}td,th{text-align:left;padding:11px;border-bottom:1px solid var(--line)}th{color:var(--muted);font-size:12px;text-transform:uppercase}.notice{color:var(--muted);font-size:13px;margin-top:18px}.status{margin:8px 0;color:var(--muted)}.hidden{display:none}
+</style></head><body><main>
+<header class="top"><div><div class="brand">QINGCLOUD <span>COMPUTE</span></div><div class="sub">Distributed compute · Network control room</div></div><div class="pill">CONTROL PLANE PREVIEW</div></header>
+<section class="panel connect"><input id="token" type="password" autocomplete="off" placeholder="Coordinator admin token" aria-label="Coordinator admin token"><button id="connect">Connect securely</button><button id="refresh" class="secondary hidden">Refresh</button><button id="disconnect" class="secondary hidden">Disconnect</button></section>
+<div id="status" class="status" role="status">Enter your admin token to load the live dashboard. The token stays in this page's memory and is not saved.</div>
+<section id="content" class="hidden">
+<div class="metrics" id="metrics"></div>
+<div class="grid"><section class="panel"><h2>Worker network</h2><div id="workers"></div></section><section class="panel"><h2>Distributed tasks</h2><div id="tasks"></div></section></div>
+<section class="panel section"><h2>Recent jobs</h2><div class="tablewrap"><table><thead><tr><th>Job</th><th>Kind</th><th>Status</th><th>Worker</th><th>Attempts</th><th>Progress</th></tr></thead><tbody id="jobs"></tbody></table></div></section>
+</section><p class="notice">Capacity figures are reported inventory, not guaranteed availability. Aggregate GPU VRAM is not a shared memory pool. Do not expose this prototype publicly without additional deployment security.</p>
+</main>
+<script>
+let adminToken=null,timer=null;
+const $=id=>document.getElementById(id);
+const esc=value=>String(value??"—").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function metric(label,value){return '<div class="metric"><small>'+esc(label)+'</small><strong>'+esc(value)+'</strong></div>'}
+async function load(){
+ if(!adminToken)return;
+ try{
+  const response=await fetch("/v1/dashboard",{headers:{"X-QingCloud-Admin-Token":adminToken},cache:"no-store"});
+  if(!response.ok)throw new Error(response.status===401?"Admin token rejected.":response.status===503?"Coordinator admin token is not configured.":"Dashboard request failed ("+response.status+").");
+  const d=await response.json(),o=d.overview;
+  $("metrics").innerHTML=[metric("Online workers",o.online_workers+" / "+o.workers),metric("CPU cores online",o.reported_cpu_cores_online),metric("RAM online",Math.round(o.reported_ram_mb_online/1024)+" GB"),metric("Reported GPUs",o.reported_gpu_count_online),metric("Queued jobs",o.queued_jobs),metric("Running jobs",o.running_jobs)].join("");
+  $("workers").innerHTML=d.workers.length?d.workers.map(w=>'<div class="row"><div><b>'+esc(w.name)+'</b><div class="muted">'+esc(w.hostname)+' · '+esc(w.os)+'</div><div class="muted">'+esc(w.cpu_cores)+' CPU cores · '+esc(Math.round(w.ram_mb/1024))+' GB RAM · '+esc(w.gpus.length)+' GPU(s)</div></div><div><span class="pill '+esc(w.state)+'">'+esc(w.state)+'</span><div class="muted">'+esc(w.running_jobs)+' running</div></div></div>').join(""):'<p class="muted">No workers enrolled yet.</p>';
+  $("tasks").innerHTML=d.tasks.length?d.tasks.map(t=>'<div class="row"><div><b>'+esc(t.kind)+'</b><div class="muted">'+esc(t.task_id)+'</div></div><div>'+esc(t.succeeded)+' / '+esc(t.chunks)+' done<div class="muted">'+esc(t.running)+' running · '+esc(t.queued)+' queued</div></div></div>').join(""):'<p class="muted">No distributed tasks yet.</p>';
+  $("jobs").innerHTML=d.jobs.length?d.jobs.slice().reverse().slice(0,40).map(j=>'<tr><td>'+esc(j.job_id.slice(0,8))+'</td><td>'+esc(j.kind)+'</td><td class="'+esc(j.state)+'">'+esc(j.state)+'</td><td>'+esc(j.assigned_worker_id?j.assigned_worker_id.slice(0,8):"—")+'</td><td>'+esc(j.attempts)+' / '+esc(j.max_attempts)+'</td><td>'+esc(j.progress)+'%</td></tr>').join(""):'<tr><td colspan="6" class="muted">No jobs submitted.</td></tr>';
+  $("content").classList.remove("hidden");$("status").textContent="Connected · Last updated "+new Date().toLocaleTimeString();
+ }catch(e){$("status").textContent=e.message;if(e.message.includes("rejected")||e.message.includes("not configured"))disconnect(false)}
+}
+function disconnect(clear=true){adminToken=null;if(timer)clearInterval(timer);timer=null;$("content").classList.add("hidden");$("refresh").classList.add("hidden");$("disconnect").classList.add("hidden");$("connect").classList.remove("hidden");if(clear)$("token").value="";$("status").textContent="Disconnected. Your token has been cleared from page memory."}
+$("connect").addEventListener("click",()=>{const token=$("token").value.trim();if(!token){$("status").textContent="Enter the admin token first.";return}adminToken=token;$("token").value="";$("connect").classList.add("hidden");$("refresh").classList.remove("hidden");$("disconnect").classList.remove("hidden");load();timer=setInterval(load,15000)});
+$("refresh").addEventListener("click",load);$("disconnect").addEventListener("click",()=>disconnect());
+</script></body></html>
