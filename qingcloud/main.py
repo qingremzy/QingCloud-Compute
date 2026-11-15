@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
 from threading import RLock
+from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import HTMLResponse
 
 from qingcloud.db import claim_job_atomic, init_db, load_state, save_job, save_worker, save_worker_token
 from qingcloud.models import (
@@ -72,6 +74,13 @@ def overview(admin_token: str | None = Header(default=None, alias="X-QingCloud-A
         "storage": "sqlite",
         "note": "Hardware totals are reported inventory only. Aggregate VRAM is not one unified GPU memory pool, and reported capacity is not guaranteed available capacity.",
     }
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard_page():
+    """Serve the static admin UI. Live data remains behind the admin-token API."""
+    page = Path(__file__).with_name("dashboard.html").read_text(encoding="utf-8")
+    return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/v1/dashboard")
