@@ -247,8 +247,23 @@ def claim_job_atomic(worker: WorkerRecord, jobs: dict[str, JobRecord], workers: 
             rows = _CONNECTION.execute("SELECT job_id, data_json FROM jobs").fetchall()
             candidates = []
             persisted_jobs = [JobRecord.model_validate_json(row["data_json"]) for row in rows]
+            resource_reservations: dict[str, dict[str, int]] = {}
+            for active in persisted_jobs:
+                if active.state == JobState.running and active.assigned_worker_id:
+                    totals = resource_reservations.setdefault(active.assigned_worker_id, {"cpu": 0, "ram": 0})
+                    totals["cpu"] += active.reserved_cpu_cores
+                    totals["ram"] += active.reserved_ram_mb
+            own_reserved = resource_reservations.get(worker.worker_id, {"cpu": 0, "ram": 0})
+            effective_worker = worker.model_copy(update={
+                "cpu_cores": max(0, worker.cpu_cores - own_reserved["cpu"]),
+                "ram_mb": max(0, worker.ram_mb - own_reserved["ram"]),
+            })
+            own_telemetry = latest_worker_telemetry(worker.worker_id) or {}
+            if own_telemetry:
+                own_telemetry = dict(own_telemetry)
+                own_telemetry["ram_available_mb"] = max(0, int(own_telemetry.get("ram_available_mb", 0)) - own_reserved["ram"])
             for candidate in persisted_jobs:
-                if candidate.state == JobState.queued and worker_can_run(worker, candidate):
+                if candidate.state == JobState.queued and worker_can_run(effective_worker, candidate, own_telemetry):
                     candidates.append(candidate)
             candidates.sort(key=lambda job: (job.created_at, job.job_id))
             claimed = None
@@ -287,7 +302,17 @@ def claim_job_atomic(worker: WorkerRecord, jobs: dict[str, JobRecord], workers: 
                         reported_free = gpu.free_vram_mb if gpu.free_vram_mb is not None else gpu.vram_mb
                         effective_free = max(0, reported_free - device_reservations.get(device_index, 0))
                         effective_gpus.append(gpu.model_copy(update={"free_vram_mb": effective_free}))
-                    ranking_workers.append(item.model_copy(update={"gpus": effective_gpus}))
+                    reserved = resource_reservations.get(item.worker_id, {"cpu": 0, "ram": 0})
+                    ranking_workers.append(item.model_copy(update={
+                        "gpus": effective_gpus,
+                        "cpu_cores": max(0, item.cpu_cores - reserved["cpu"]),
+                        "ram_mb": max(0, item.ram_mb - reserved["ram"]),
+                    }))
+                    if telemetry.get(item.worker_id):
+                        telemetry[item.worker_id] = dict(telemetry[item.worker_id])
+                        telemetry[item.worker_id]["ram_available_mb"] = max(
+                            0, int(telemetry[item.worker_id].get("ram_available_mb", 0)) - reserved["ram"]
+                        )
 
                 reliability = {item.worker_id: worker_reliability_stats(item.worker_id) for item in eligible_workers}
                 telemetry = {item.worker_id: latest_worker_telemetry(item.worker_id) or {} for item in eligible_workers}
@@ -321,6 +346,8 @@ def claim_job_atomic(worker: WorkerRecord, jobs: dict[str, JobRecord], workers: 
             else:
                 claimed.assigned_gpu_index = None
                 claimed.reserved_gpu_vram_mb = 0
+            claimed.reserved_cpu_cores = claimed.required_cpu_cores
+            claimed.reserved_ram_mb = claimed.required_ram_mb
             claimed.state = JobState.running
             claimed.assigned_worker_id = worker.worker_id
             claimed.attempts += 1
