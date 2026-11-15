@@ -59,11 +59,16 @@ class WorkerRecord(WorkerRegistration):
     approval_status: WorkerApprovalStatus = WorkerApprovalStatus.pending
     approval_updated_at: datetime | None = None
     approval_note: str | None = Field(default=None, max_length=500)
+    max_concurrent_jobs: int = Field(default=1, ge=1, le=16)
 
 
 class WorkerApprovalUpdate(BaseModel):
     status: WorkerApprovalStatus
     note: str | None = Field(default=None, max_length=500)
+
+
+class WorkerCapacityUpdate(BaseModel):
+    max_concurrent_jobs: int = Field(ge=1, le=16)
 
 
 class DistributedSumCreate(BaseModel):
