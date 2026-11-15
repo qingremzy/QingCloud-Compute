@@ -33,7 +33,7 @@ Open the interactive API docs at `http://127.0.0.1:8000/docs`.
 4. `POST /v1/jobs/{job_id}/heartbeat` — report progress.
 5. `POST /v1/jobs/{job_id}/complete` — report completion or failure.
 
-The initial prototype uses in-memory state. Restarting the server clears registered workers and jobs. Persistent storage, authentication, secure worker execution, quotas, and production deployment are later milestones.
+The prototype uses in-memory state. Restarting the server clears registered workers, token hashes, and jobs. Set a strong `QCLOUD_ENROLLMENT_TOKEN` environment variable before enrolling workers. Registration requires that secret in the `X-QingCloud-Enrollment-Token` header. Each enrolled worker receives a one-time `access_token`. Store it securely and send it as `X-QingCloud-Worker-Token` for worker heartbeat, claim, and job-result calls. The server stores only a SHA-256 hash of the worker token. If the server restarts, workers must be enrolled again. Job submission and read-only endpoints are still unauthenticated, so this remains a development prototype and must not be exposed publicly.
 
 ## Safety
 
@@ -42,7 +42,7 @@ Do not expose this prototype publicly. Do not execute arbitrary user-supplied co
 ## Roadmap
 
 - [x] Initial API and in-memory scheduler prototype
-- [ ] Worker authentication and signed enrollment
+- [x] Basic worker enrollment secret and per-worker API tokens\n- [ ] Persistent token and worker storage
 - [ ] Persistent database and durable queue
 - [ ] Secure, sandboxed worker runtime
 - [ ] GPU capability probing (CUDA/ROCm/Metal where available)
