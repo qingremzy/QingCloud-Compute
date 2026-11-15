@@ -142,3 +142,7 @@ The admin dashboard now shows active GPU reservations by physical device, each d
 ### Coordinator restart recovery
 
 On startup, the coordinator reloads persisted jobs and transactionally checks running-job leases against the configured lease timeout. Expired jobs are requeued when attempts remain or failed when their attempt limit is exhausted. Recovery clears the assigned GPU device and VRAM reservation and persists the updated job record before the coordinator serves new work. Jobs with a still-valid lease are left running until their lease expires. The same persisted recovery check runs before worker claims. This prevents expired reservations from surviving a restart, but it does not prove a worker process has stopped or forcibly reclaim physical GPU memory.
+
+### Worker attempt fencing
+
+Every successful job claim increments a monotonically increasing attempt number. The worker agent must send that exact attempt value on job heartbeat and completion requests. The coordinator checks the worker identity, running state, and attempt number, then compares and persists the update inside a SQLite write transaction. A heartbeat or completion from an expired or superseded attempt receives HTTP 409 and cannot overwrite the current attempt's persisted job state. This is coordinator-side stale-request protection, not process termination or physical GPU isolation.
