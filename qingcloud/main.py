@@ -489,6 +489,7 @@ def get_distributed_sum(
         status = "succeeded"
     return {
         "task_id": task_id,
+        "source": task_jobs[0].source,
         "status": status,
         "chunk_count": len(task_jobs),
         "succeeded_chunks": sum(state_of(job) == "succeeded" for job in task_jobs),
