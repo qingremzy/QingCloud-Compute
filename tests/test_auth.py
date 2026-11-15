@@ -267,3 +267,52 @@ def test_browser_dashboard_page_is_served_without_embedded_admin_secret():
     assert "localStorage" not in response.text
     assert "sessionStorage" not in response.text
     assert "test-admin-secret" not in response.text
+
+
+
+def test_gpu_history_records_hardware_changes_and_requires_admin_token():
+    worker_id, token = enroll("gpu-history-worker")
+    endpoint = f"/v1/workers/{worker_id}/gpu-history"
+    assert client.get(endpoint).status_code == 401
+    headers = {"X-QingCloud-Worker-Token": token}
+    first = client.put(
+        f"/v1/workers/{worker_id}/capabilities",
+        headers=headers,
+        json={"name": "gpu-history-worker", "gpus": [
+            {"name": "NVIDIA T4", "vendor": "NVIDIA", "vram_mb": 16000,
+             "free_vram_mb": 12000, "utilization_percent": 10}
+        ]},
+    )
+    assert first.status_code == 200
+    # Volatile telemetry changes must not create a hardware-change event.
+    same_gpu = client.put(
+        f"/v1/workers/{worker_id}/capabilities",
+        headers=headers,
+        json={"name": "gpu-history-worker", "gpus": [
+            {"name": "NVIDIA T4", "vendor": "NVIDIA", "vram_mb": 16000,
+             "free_vram_mb": 1000, "utilization_percent": 95}
+        ]},
+    )
+    assert same_gpu.status_code == 200
+    added_gpu = client.put(
+        f"/v1/workers/{worker_id}/capabilities",
+        headers=headers,
+        json={"name": "gpu-history-worker", "gpus": [
+            {"name": "NVIDIA T4", "vendor": "NVIDIA", "vram_mb": 16000},
+            {"name": "NVIDIA A10", "vendor": "NVIDIA", "vram_mb": 23000}
+        ]},
+    )
+    assert added_gpu.status_code == 200
+    history = client.get(endpoint, headers={"X-QingCloud-Admin-Token": "test-admin-secret"})
+    assert history.status_code == 200
+    events = history.json()["events"]
+    assert [event["event_type"] for event in events] == ["gpu_added", "initial_gpu_inventory"]
+    assert "volatile live telemetry" in history.json()["note"]
+
+
+def test_gpu_history_returns_not_found_for_unknown_worker():
+    response = client.get(
+        "/v1/workers/missing/gpu-history",
+        headers={"X-QingCloud-Admin-Token": "test-admin-secret"},
+    )
+    assert response.status_code == 404
