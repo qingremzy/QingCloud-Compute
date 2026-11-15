@@ -22,6 +22,7 @@ def worker_suitability_score(
     job: JobRecord,
     running_jobs: int = 0,
     reliability: dict | None = None,
+    resource_telemetry: dict | None = None,
 ) -> float:
     """Rank compatible workers using reported headroom, load and observed outcomes.
 
@@ -34,6 +35,24 @@ def worker_suitability_score(
     load_component = 100.0 / (1 + max(0, running_jobs))
     cpu_component = min(100.0, worker.cpu_cores * 10.0)
     ram_component = min(100.0, worker.ram_mb / 1024.0 * 5.0)
+    telemetry = resource_telemetry or {}
+    sample_time = telemetry.get("created_at")
+    telemetry_fresh = False
+    if sample_time:
+        try:
+            stamp = datetime.fromisoformat(sample_time.replace("Z", "+00:00"))
+            telemetry_fresh = datetime.now(timezone.utc) - stamp <= timedelta(seconds=120)
+        except (TypeError, ValueError):
+            telemetry_fresh = False
+    if telemetry_fresh:
+        cpu_pressure = float(telemetry.get("cpu_percent", 0.0))
+        ram_total = max(1, int(telemetry.get("ram_total_mb", worker.ram_mb or 1)))
+        ram_available = max(0, int(telemetry.get("ram_available_mb", 0)))
+        live_cpu_score = 100.0 - min(100.0, max(0.0, cpu_pressure))
+        live_ram_score = min(100.0, ram_available / ram_total * 100.0)
+        live_resource_score = live_cpu_score * 0.4 + live_ram_score * 0.6
+    else:
+        live_resource_score = 50.0
 
     if job.required_gpu_vram_mb:
         candidates = [
@@ -45,10 +64,10 @@ def worker_suitability_score(
         headroom = min(100.0, available / max(job.required_gpu_vram_mb, 1) * 25.0)
         utilization = gpu.utilization_percent
         gpu_component = headroom if utilization is None else headroom * 0.7 + (100.0 - utilization) * 0.3
-        return round(gpu_component * 0.40 + reliability_component * 0.35 + load_component * 0.15 + cpu_component * 0.10, 3)
+        return round(gpu_component * 0.35 + reliability_component * 0.30 + load_component * 0.15 + live_resource_score * 0.15 + cpu_component * 0.05, 3)
 
     capacity_component = cpu_component * 0.6 + ram_component * 0.4
-    return round(reliability_component * 0.35 + load_component * 0.35 + capacity_component * 0.30, 3)
+    return round(reliability_component * 0.30 + load_component * 0.25 + capacity_component * 0.15 + live_resource_score * 0.30, 3)
 
 
 def rank_workers_for_job(
@@ -56,9 +75,11 @@ def rank_workers_for_job(
     workers: list[WorkerRecord],
     running_job_counts: dict[str, int] | None = None,
     reliability_by_worker: dict[str, dict] | None = None,
+    telemetry_by_worker: dict[str, dict] | None = None,
 ) -> list[dict]:
     running_job_counts = running_job_counts or {}
     reliability_by_worker = reliability_by_worker or {}
+    telemetry_by_worker = telemetry_by_worker or {}
     ranked = []
     current_time = datetime.now(timezone.utc)
     for worker in workers:
@@ -69,6 +90,7 @@ def rank_workers_for_job(
         score = worker_suitability_score(
             worker, job, running_job_counts.get(worker.worker_id, 0),
             reliability_by_worker.get(worker.worker_id),
+            telemetry_by_worker.get(worker.worker_id),
         )
         ranked.append({"worker_id": worker.worker_id, "score": score})
     return sorted(ranked, key=lambda item: (-item["score"], item["worker_id"]))
