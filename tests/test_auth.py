@@ -670,3 +670,27 @@ def test_gpu_vram_is_reserved_per_device_until_job_finishes():
     retry_claim = client.post(f"/v1/workers/{worker_id}/claim", headers=headers).json()
     assert retry_claim["job_id"] == third["job_id"]
     assert retry_claim["assigned_gpu_index"] == 1
+
+
+def test_dashboard_exposes_live_gpu_reservations_and_per_job_assignment():
+    worker_id, token = enroll("dashboard-gpu-worker")
+    worker_headers = {"X-QingCloud-Worker-Token": token}
+    admin = {"X-QingCloud-Admin-Token": "test-admin-secret"}
+    client.put(f"/v1/workers/{worker_id}/capacity", headers=admin, json={"max_concurrent_jobs": 2})
+    refreshed = client.put(
+        f"/v1/workers/{worker_id}/capabilities", headers=worker_headers,
+        json={"name": "dashboard-gpu-worker", "cpu_cores": 4, "ram_mb": 8192,
+              "gpus": [{"device_index": 0, "name": "GPU-D", "vram_mb": 12000, "free_vram_mb": 10000}]},
+    )
+    assert refreshed.status_code == 200
+    created = client.post("/v1/jobs", headers=admin, json={"kind": "diagnostic", "required_gpu_vram_mb": 4000}).json()
+    claimed = client.post(f"/v1/workers/{worker_id}/claim", headers=worker_headers).json()
+    assert claimed["job_id"] == created["job_id"]
+    data = client.get("/v1/dashboard", headers=admin).json()
+    worker = next(item for item in data["workers"] if item["worker_id"] == worker_id)
+    assert worker["reserved_gpu_vram_mb_total"] == 4000
+    assert worker["gpus"][0]["reserved_vram_mb"] == 4000
+    assert worker["gpus"][0]["scheduler_headroom_vram_mb"] == 6000
+    job = next(item for item in data["jobs"] if item["job_id"] == created["job_id"])
+    assert job["assigned_gpu_index"] == 0
+    assert job["reserved_gpu_vram_mb"] == 4000
