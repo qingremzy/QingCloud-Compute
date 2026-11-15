@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse
 
-from qingcloud.db import claim_job_atomic, init_db, load_state, save_job, save_worker, save_worker_token, record_gpu_event, list_gpu_events
+from qingcloud.db import claim_job_atomic, init_db, load_state, save_job, save_worker, save_worker_token, record_gpu_event, list_gpu_events, record_worker_job_event, worker_reliability_stats
 from qingcloud.models import (
     DistributedSumCreate, JobCompletion, JobCreate, JobHeartbeat, JobRecord, JobState,
     WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration, WorkerState,
@@ -97,6 +97,7 @@ def dashboard(admin_token: str | None = Header(default=None, alias="X-QingCloud-
             "os": worker.os, "state": worker.state.value, "last_seen_at": worker.last_seen_at,
             "capabilities_updated_at": worker.capabilities_updated_at,
             "gpu_health": assess_worker_gpu_health(worker, now()),
+            "reliability": worker_reliability_stats(worker.worker_id),
             "cpu_cores": worker.cpu_cores, "ram_mb": worker.ram_mb,
             "gpus": [gpu.model_dump() for gpu in worker.gpus], "running_jobs": len(running),
         })
@@ -179,6 +180,18 @@ def update_worker_capabilities(
     if event_type:
         record_gpu_event(worker_id, event_type, before_gpus, after_gpus, worker.capabilities_updated_at)
     return worker
+
+
+@app.get("/v1/workers/{worker_id}/reliability")
+def worker_reliability(
+    worker_id: str,
+    admin_token: str | None = Header(default=None, alias="X-QingCloud-Admin-Token"),
+):
+    verify_admin_token(admin_token)
+    if worker_id not in workers:
+        raise HTTPException(status_code=404, detail="Worker not found")
+    return {"worker_id": worker_id, **worker_reliability_stats(worker_id),
+            "note": "Score uses only completed job-attempt outcomes recorded by the coordinator. Claims, queued jobs, running jobs, and abandoned attempts are not counted as successes or failures."}
 
 
 @app.get("/v1/workers/{worker_id}/gpu-history")
@@ -378,4 +391,5 @@ def complete_job(
             job.state = JobState.failed
     job.updated_at = now()
     save_job(job)
+    record_worker_job_event(job.job_id, worker_id, "succeeded" if data.success else "failed", job.attempts, job.updated_at)
     return job
