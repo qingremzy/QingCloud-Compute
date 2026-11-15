@@ -29,6 +29,7 @@ class JobState(str, Enum):
 
 
 class GPUDevice(BaseModel):
+    device_index: int | None = Field(default=None, ge=0)
     name: str
     vendor: str | None = None
     vram_mb: int = Field(default=0, ge=0)
@@ -90,6 +91,8 @@ class JobRecord(JobCreate):
     task_id: str | None = None
     state: JobState = JobState.queued
     assigned_worker_id: str | None = None
+    assigned_gpu_index: int | None = Field(default=None, ge=0)
+    reserved_gpu_vram_mb: int = Field(default=0, ge=0)
     attempts: int = 0
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
