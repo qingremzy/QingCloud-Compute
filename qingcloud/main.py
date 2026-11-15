@@ -74,6 +74,42 @@ def overview(admin_token: str | None = Header(default=None, alias="X-QingCloud-A
     }
 
 
+@app.get("/v1/dashboard")
+def dashboard(admin_token: str | None = Header(default=None, alias="X-QingCloud-Admin-Token")):
+    """Return an admin-authenticated, read-only network operations snapshot."""
+    verify_admin_token(admin_token)
+    worker_rows = []
+    for worker in workers.values():
+        running = [job for job in jobs.values() if job.assigned_worker_id == worker.worker_id and job.state.value == "running"]
+        worker_rows.append({
+            "worker_id": worker.worker_id, "name": worker.name, "hostname": worker.hostname,
+            "os": worker.os, "state": worker.state.value, "last_seen_at": worker.last_seen_at,
+            "cpu_cores": worker.cpu_cores, "ram_mb": worker.ram_mb,
+            "gpus": [gpu.model_dump() for gpu in worker.gpus], "running_jobs": len(running),
+        })
+    job_rows = [{
+        "job_id": job.job_id, "task_id": job.task_id, "kind": job.kind, "state": job.state.value,
+        "assigned_worker_id": job.assigned_worker_id, "attempts": job.attempts,
+        "max_attempts": job.max_attempts, "progress": job.progress,
+        "created_at": job.created_at, "updated_at": job.updated_at, "error": job.error,
+    } for job in jobs.values()]
+    task_groups = {}
+    for job in jobs.values():
+        if not job.task_id:
+            continue
+        group = task_groups.setdefault(job.task_id, {
+            "task_id": job.task_id, "kind": "distributed_sum", "chunks": 0,
+            "succeeded": 0, "running": 0, "queued": 0, "failed": 0,
+        })
+        group["chunks"] += 1
+        group[job.state.value] += 1
+    return {
+        "overview": overview(admin_token), "workers": worker_rows, "jobs": job_rows,
+        "tasks": list(task_groups.values()), "generated_at": now(),
+        "note": "Reported hardware is inventory only. Aggregate GPU VRAM is not a unified memory pool and does not guarantee available capacity.",
+    }
+
+
 @app.post("/v1/workers/register", response_model=WorkerEnrollmentResponse)
 def register_worker(
     data: WorkerRegistration,
