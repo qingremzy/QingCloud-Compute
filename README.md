@@ -165,3 +165,8 @@ Job submissions can declare `required_cpu_cores` (0–256) and `required_ram_mb`
 ### CPU and RAM reservation accounting
 
 When a job is claimed, its declared CPU-core and RAM requirements are recorded as scheduler reservations against that worker. Later claims subtract active reservations from reported CPU-core capacity and RAM capacity. Fresh RAM telemetry is also reduced by active RAM reservations before checking a new job. Reservations are released on job completion, retry/failure completion, or expired-lease recovery. The dashboard API reports active per-worker totals and per-job reservations. These are coordinator-side accounting estimates only: they do not pin CPU cores, allocate memory, prevent unrelated processes from using resources, or provide OS/container isolation. Providers and their telemetry are self-reported.
+
+
+### Worker-side resource preflight
+
+Immediately after claiming a job and before running its allowlisted handler, the worker agent takes a fresh local CPU/RAM/GPU snapshot and checks the job's declared CPU-core, available-RAM, and GPU free-VRAM requirements again. If the local snapshot no longer meets a requirement, the agent does not execute the task, reports a failed attempt with the reason, and stops processing further jobs in that cycle so another provider can claim a retry. This is a last-moment admission check, not an OS-enforced resource limit. CPU/RAM can still change after the check, GPU telemetry can be unavailable or stale, and the built-in runtime remains limited to its existing CPU-safe task handlers.
