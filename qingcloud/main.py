@@ -13,7 +13,7 @@ from qingcloud.models import (
     DistributedSumCreate, JobCompletion, JobCreate, JobHeartbeat, JobRecord, JobState,
     WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration, WorkerState,
 )
-from qingcloud.scheduler import recover_expired_jobs
+from qingcloud.scheduler import recover_expired_jobs, reconcile_worker_presence
 from qingcloud.gpu_health import assess_worker_gpu_health
 from qingcloud.gpu_history import gpu_inventory_snapshot, classify_gpu_inventory_change
 from qingcloud.security import (
@@ -44,6 +44,12 @@ def now():
     return datetime.now(timezone.utc)
 
 
+def refresh_worker_presence():
+    """Persist offline transitions for workers whose heartbeat has gone stale."""
+    for changed_worker in reconcile_worker_presence(workers, now()):
+        save_worker(changed_worker)
+
+
 def authenticate_worker(worker_id: str, token: str | None) -> WorkerRecord:
     require_worker_token(worker_id, token, worker_token_hashes)
     worker = workers.get(worker_id)
@@ -60,6 +66,7 @@ def health():
 @app.get("/v1/overview")
 def overview(admin_token: str | None = Header(default=None, alias="X-QingCloud-Admin-Token")):
     verify_admin_token(admin_token)
+    refresh_worker_presence()
     gpu_vram_mb = sum(gpu.vram_mb for worker in workers.values() for gpu in worker.gpus)
     online = [w for w in workers.values() if w.state.value == "online"]
     return {
@@ -89,6 +96,7 @@ def dashboard_page():
 def dashboard(admin_token: str | None = Header(default=None, alias="X-QingCloud-Admin-Token")):
     """Return an admin-authenticated, read-only network operations snapshot."""
     verify_admin_token(admin_token)
+    refresh_worker_presence()
     worker_rows = []
     for worker in workers.values():
         running = [job for job in jobs.values() if job.assigned_worker_id == worker.worker_id and job.state.value == "running"]
@@ -144,7 +152,41 @@ def register_worker(
 @app.get("/v1/workers", response_model=list[WorkerRecord])
 def list_workers(admin_token: str | None = Header(default=None, alias="X-QingCloud-Admin-Token")):
     verify_admin_token(admin_token)
+    refresh_worker_presence()
     return list(workers.values())
+
+
+@app.get("/v1/providers")
+def provider_registry(
+    admin_token: str | None = Header(default=None, alias="X-QingCloud-Admin-Token"),
+):
+    """Return a concise live registry of enrolled compute providers."""
+    verify_admin_token(admin_token)
+    refresh_worker_presence()
+    current = now()
+    entries = []
+    for worker in workers.values():
+        age = max(0.0, (current - worker.last_seen_at).total_seconds())
+        entries.append({
+            "worker_id": worker.worker_id,
+            "name": worker.name,
+            "hostname": worker.hostname,
+            "state": worker.state.value,
+            "last_seen_at": worker.last_seen_at,
+            "heartbeat_age_seconds": round(age, 1),
+            "cpu_cores": worker.cpu_cores,
+            "ram_mb": worker.ram_mb,
+            "gpu_count": len(worker.gpus),
+            "labels": worker.labels,
+        })
+    return {
+        "providers": entries,
+        "total": len(entries),
+        "online": sum(item["state"] == "online" for item in entries),
+        "offline": sum(item["state"] == "offline" for item in entries),
+        "heartbeat_timeout_seconds": 120,
+        "note": "Providers are enrolled machines reporting authenticated heartbeats. Offline status is inferred after 120 seconds without a heartbeat. This registry does not discover or scan arbitrary internet-connected devices.",
+    }
 
 
 @app.post("/v1/workers/{worker_id}/heartbeat")
@@ -333,6 +375,9 @@ def worker_claim(
 ):
     worker = authenticate_worker(worker_id, token)
     worker.last_seen_at = now()
+    worker.state = WorkerState.online
+    save_worker(worker)
+    refresh_worker_presence()
     # Serialize in-process claims so two API threads cannot take the same queued job.
     # A multi-process deployment will still require a database-level atomic claim.
     with claim_lock:
