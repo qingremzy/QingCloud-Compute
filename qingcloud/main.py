@@ -8,10 +8,10 @@ from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse
 
-from qingcloud.db import claim_job_atomic, init_db, load_state, save_job, save_worker, save_worker_token, record_gpu_event, list_gpu_events, record_worker_job_event, worker_reliability_stats, create_worker_invitation, redeem_worker_invitation
+from qingcloud.db import claim_job_atomic, init_db, load_state, save_job, save_worker, save_worker_token, record_gpu_event, list_gpu_events, record_worker_job_event, worker_reliability_stats, create_worker_invitation, redeem_worker_invitation, record_worker_approval_event, list_worker_approval_events
 from qingcloud.models import (
     DistributedSumCreate, JobCompletion, JobCreate, JobHeartbeat, JobRecord, JobState,
-    WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration, WorkerState, WorkerInvitationCreate,
+    WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration, WorkerState, WorkerInvitationCreate, WorkerApprovalUpdate, WorkerApprovalStatus,
 )
 from qingcloud.scheduler import recover_expired_jobs, reconcile_worker_presence
 from qingcloud.gpu_health import assess_worker_gpu_health
@@ -102,7 +102,10 @@ def dashboard(admin_token: str | None = Header(default=None, alias="X-QingCloud-
         running = [job for job in jobs.values() if job.assigned_worker_id == worker.worker_id and job.state.value == "running"]
         worker_rows.append({
             "worker_id": worker.worker_id, "name": worker.name, "hostname": worker.hostname,
-            "os": worker.os, "state": worker.state.value, "last_seen_at": worker.last_seen_at,
+            "os": worker.os, "state": worker.state.value,
+            "approval_status": worker.approval_status.value,
+            "approval_updated_at": worker.approval_updated_at,
+            "approval_note": worker.approval_note, "last_seen_at": worker.last_seen_at,
             "capabilities_updated_at": worker.capabilities_updated_at,
             "gpu_health": assess_worker_gpu_health(worker, now()),
             "reliability": worker_reliability_stats(worker.worker_id),
@@ -206,6 +209,40 @@ def provider_registry(
         "heartbeat_timeout_seconds": 120,
         "note": "Providers are enrolled machines reporting authenticated heartbeats. Offline status is inferred after 120 seconds without a heartbeat. This registry does not discover or scan arbitrary internet-connected devices.",
     }
+
+
+
+@app.put("/v1/workers/{worker_id}/approval")
+def update_worker_approval(
+    worker_id: str,
+    data: WorkerApprovalUpdate,
+    admin_token: str | None = Header(default=None, alias="X-QingCloud-Admin-Token"),
+):
+    """Approve, reject, or return an enrolled provider to pending review."""
+    verify_admin_token(admin_token)
+    worker = workers.get(worker_id)
+    if worker is None:
+        raise HTTPException(status_code=404, detail="Worker not found")
+    previous = worker.approval_status.value
+    if previous != data.status.value:
+        worker.approval_status = data.status
+        worker.approval_updated_at = now()
+        worker.approval_note = data.note
+        save_worker(worker)
+        record_worker_approval_event(worker_id, previous, data.status.value, data.note, worker.approval_updated_at)
+    return {"worker_id": worker_id, "approval_status": worker.approval_status.value, "approval_updated_at": worker.approval_updated_at, "approval_note": worker.approval_note}
+
+
+@app.get("/v1/workers/{worker_id}/approval-history")
+def worker_approval_history(
+    worker_id: str,
+    admin_token: str | None = Header(default=None, alias="X-QingCloud-Admin-Token"),
+):
+    verify_admin_token(admin_token)
+    if worker_id not in workers:
+        raise HTTPException(status_code=404, detail="Worker not found")
+    events = list_worker_approval_events(worker_id)
+    return {"worker_id": worker_id, "events": events, "total": len(events)}
 
 
 @app.post("/v1/workers/{worker_id}/heartbeat")
