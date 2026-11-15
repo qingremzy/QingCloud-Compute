@@ -8,7 +8,7 @@ from threading import RLock
 from typing import Any
 
 from qingcloud.models import JobRecord, JobState, WorkerRecord
-from qingcloud.scheduler import worker_can_run
+from qingcloud.scheduler import worker_can_run, rank_workers_for_job
 
 _DB_PATH = os.getenv("QCLOUD_DB_PATH", "qingcloud.sqlite3")
 _CONNECTION = sqlite3.connect(_DB_PATH, check_same_thread=False)
@@ -172,7 +172,7 @@ def clear_all() -> None:
         _CONNECTION.execute("DELETE FROM workers")
 
 
-def claim_job_atomic(worker: WorkerRecord, jobs: dict[str, JobRecord]) -> JobRecord | None:
+def claim_job_atomic(worker: WorkerRecord, jobs: dict[str, JobRecord], workers: dict[str, WorkerRecord] | None = None) -> JobRecord | None:
     """Claim one compatible queued job using a SQLite write transaction.
 
     BEGIN IMMEDIATE serializes claim transactions across API processes that share
@@ -183,15 +183,29 @@ def claim_job_atomic(worker: WorkerRecord, jobs: dict[str, JobRecord]) -> JobRec
         try:
             rows = _CONNECTION.execute("SELECT job_id, data_json FROM jobs").fetchall()
             candidates = []
-            for row in rows:
-                candidate = JobRecord.model_validate_json(row["data_json"])
+            persisted_jobs = [JobRecord.model_validate_json(row["data_json"]) for row in rows]
+            for candidate in persisted_jobs:
                 if candidate.state == JobState.queued and worker_can_run(worker, candidate):
                     candidates.append(candidate)
             candidates.sort(key=lambda job: (job.created_at, job.job_id))
-            if not candidates:
+            claimed = None
+            if workers is not None:
+                online_workers = list(workers.values())
+                running_counts: dict[str, int] = {}
+                for item in persisted_jobs:
+                    if item.state == JobState.running and item.assigned_worker_id:
+                        running_counts[item.assigned_worker_id] = running_counts.get(item.assigned_worker_id, 0) + 1
+                reliability = {item.worker_id: worker_reliability_stats(item.worker_id) for item in online_workers}
+                for candidate in candidates:
+                    ranking = rank_workers_for_job(candidate, online_workers, running_counts, reliability)
+                    if ranking and ranking[0]["worker_id"] == worker.worker_id:
+                        claimed = candidate
+                        break
+            else:
+                claimed = candidates[0] if candidates else None
+            if claimed is None:
                 _CONNECTION.commit()
                 return None
-            claimed = candidates[0]
             claimed.state = JobState.running
             claimed.assigned_worker_id = worker.worker_id
             claimed.attempts += 1
