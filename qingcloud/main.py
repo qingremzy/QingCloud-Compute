@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from threading import RLock
 from pathlib import Path
@@ -8,10 +8,10 @@ from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse
 
-from qingcloud.db import claim_job_atomic, init_db, load_state, save_job, save_worker, save_worker_token, record_gpu_event, list_gpu_events, record_worker_job_event, worker_reliability_stats
+from qingcloud.db import claim_job_atomic, init_db, load_state, save_job, save_worker, save_worker_token, record_gpu_event, list_gpu_events, record_worker_job_event, worker_reliability_stats, create_worker_invitation, redeem_worker_invitation
 from qingcloud.models import (
     DistributedSumCreate, JobCompletion, JobCreate, JobHeartbeat, JobRecord, JobState,
-    WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration, WorkerState,
+    WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration, WorkerState, WorkerInvitationCreate,
 )
 from qingcloud.scheduler import recover_expired_jobs, reconcile_worker_presence
 from qingcloud.gpu_health import assess_worker_gpu_health
@@ -132,12 +132,31 @@ def dashboard(admin_token: str | None = Header(default=None, alias="X-QingCloud-
     }
 
 
+@app.post("/v1/invitations")
+def create_invitation(
+    data: WorkerInvitationCreate,
+    admin_token: str | None = Header(default=None, alias="X-QingCloud-Admin-Token"),
+):
+    """Create a one-time provider invitation. Plaintext is returned only once."""
+    verify_admin_token(admin_token)
+    invitation = issue_worker_token()
+    expires_at = now() + timedelta(hours=data.expires_in_hours)
+    create_worker_invitation(hash_worker_token(invitation), expires_at)
+    return {"invitation_token": invitation, "expires_at": expires_at, "expires_in_hours": data.expires_in_hours,
+            "note": "Store this token securely. It is shown only once and can enroll one worker."}
+
+
 @app.post("/v1/workers/register", response_model=WorkerEnrollmentResponse)
 def register_worker(
     data: WorkerRegistration,
     enrollment_token: str | None = Header(default=None, alias="X-QingCloud-Enrollment-Token"),
+    invitation_token: str | None = Header(default=None, alias="X-QingCloud-Invitation-Token"),
 ):
-    verify_enrollment_token(enrollment_token)
+    if invitation_token:
+        if not redeem_worker_invitation(hash_worker_token(invitation_token), now()):
+            raise HTTPException(status_code=401, detail="Invalid, expired, or already-used invitation token")
+    else:
+        verify_enrollment_token(enrollment_token)
     worker_id = str(uuid4())
     record = WorkerRecord(**data.model_dump(), worker_id=worker_id)
     access_token = issue_worker_token()
