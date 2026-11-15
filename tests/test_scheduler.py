@@ -83,7 +83,7 @@ def test_live_job_lease_is_not_recovered():
 
 
 def test_gpu_job_uses_free_vram_instead_of_total_capacity():
-    worker = WorkerRecord(
+    worker = WorkerRecord(approval_status=WorkerApprovalStatus.approved, 
         worker_id="worker-free-vram",
         name="gpu-worker",
         gpus=[GPUDevice(name="GPU", vram_mb=16000, free_vram_mb=3000)],
@@ -93,7 +93,7 @@ def test_gpu_job_uses_free_vram_instead_of_total_capacity():
 
 
 def test_gpu_job_falls_back_to_total_when_free_vram_is_unknown():
-    worker = WorkerRecord(
+    worker = WorkerRecord(approval_status=WorkerApprovalStatus.approved, 
         worker_id="worker-unknown-free",
         name="gpu-worker",
         gpus=[GPUDevice(name="GPU", vram_mb=16000)],
@@ -106,8 +106,8 @@ from qingcloud.scheduler import rank_workers_for_job, worker_suitability_score
 
 def test_intelligent_scheduler_prefers_reliable_worker_for_cpu_job():
     job = make_job()
-    newer = WorkerRecord(worker_id="worker-new", name="new", cpu_cores=8, ram_mb=8192)
-    trusted = WorkerRecord(worker_id="worker-trusted", name="trusted", cpu_cores=8, ram_mb=8192)
+    newer = WorkerRecord(approval_status=WorkerApprovalStatus.approved, worker_id="worker-new", name="new", cpu_cores=8, ram_mb=8192)
+    trusted = WorkerRecord(approval_status=WorkerApprovalStatus.approved, worker_id="worker-trusted", name="trusted", cpu_cores=8, ram_mb=8192)
     ranked = rank_workers_for_job(
         job, [newer, trusted],
         reliability_by_worker={
@@ -120,11 +120,11 @@ def test_intelligent_scheduler_prefers_reliable_worker_for_cpu_job():
 
 def test_intelligent_scheduler_accounts_for_live_gpu_headroom_and_utilization():
     job = make_job(vram=8000)
-    busy = WorkerRecord(
+    busy = WorkerRecord(approval_status=WorkerApprovalStatus.approved, 
         worker_id="worker-busy", name="busy",
         gpus=[GPUDevice(name="GPU", vram_mb=24000, free_vram_mb=9000, utilization_percent=95)],
     )
-    available = WorkerRecord(
+    available = WorkerRecord(approval_status=WorkerApprovalStatus.approved, 
         worker_id="worker-available", name="available",
         gpus=[GPUDevice(name="GPU", vram_mb=24000, free_vram_mb=18000, utilization_percent=15)],
     )
@@ -134,8 +134,8 @@ def test_intelligent_scheduler_accounts_for_live_gpu_headroom_and_utilization():
 
 def test_intelligent_scheduler_accounts_for_running_job_load():
     job = make_job()
-    a = WorkerRecord(worker_id="worker-a", name="a")
-    b = WorkerRecord(worker_id="worker-b", name="b")
+    a = WorkerRecord(approval_status=WorkerApprovalStatus.approved, worker_id="worker-a", name="a")
+    b = WorkerRecord(approval_status=WorkerApprovalStatus.approved, worker_id="worker-b", name="b")
     ranked = rank_workers_for_job(job, [a, b], running_job_counts={"worker-a": 3, "worker-b": 0})
     assert ranked[0]["worker_id"] == "worker-b"
 
@@ -143,10 +143,10 @@ def test_intelligent_scheduler_accounts_for_running_job_load():
 def test_intelligent_scheduler_excludes_workers_with_stale_heartbeats():
     from datetime import datetime, timedelta, timezone
     job = make_job()
-    stale = WorkerRecord(
+    stale = WorkerRecord(approval_status=WorkerApprovalStatus.approved, 
         worker_id="worker-stale", name="stale",
         last_seen_at=datetime.now(timezone.utc) - timedelta(minutes=5),
     )
-    fresh = WorkerRecord(worker_id="worker-fresh", name="fresh")
+    fresh = WorkerRecord(approval_status=WorkerApprovalStatus.approved, worker_id="worker-fresh", name="fresh")
     ranked = rank_workers_for_job(job, [stale, fresh])
     assert [item["worker_id"] for item in ranked] == ["worker-fresh"]
