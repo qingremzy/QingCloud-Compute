@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse
 
 from qingcloud.db import claim_job_atomic, init_db, load_state, save_job, save_worker, save_worker_token, record_gpu_event, list_gpu_events, record_worker_job_event, worker_reliability_stats, create_worker_invitation, redeem_worker_invitation, record_worker_approval_event, list_worker_approval_events, recover_expired_jobs_persisted, save_job_if_current_attempt, record_worker_telemetry, latest_worker_telemetry, list_worker_telemetry
 from qingcloud.models import (
-    DistributedSumCreate, JobCompletion, JobCreate, JobHeartbeat, JobRecord, JobState, WorkerTelemetry,
+    DistributedSumCreate, JobCompletion, JobCreate, JobDecline, JobHeartbeat, JobRecord, JobState, WorkerTelemetry,
     WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration, WorkerState, WorkerInvitationCreate, WorkerApprovalUpdate, WorkerApprovalStatus, WorkerCapacityUpdate,
 )
 from qingcloud.scheduler import recover_expired_jobs, reconcile_worker_presence
@@ -558,6 +558,39 @@ def job_heartbeat(
     return {"ok": True, "progress": updated.progress, "message": data.message}
 
 
+@app.post("/v1/jobs/{job_id}/decline", response_model=JobRecord)
+def decline_job(
+    job_id: str,
+    data: JobDecline,
+    worker_id: str,
+    attempt: int = Query(..., ge=1, description="Fencing token returned by the claim endpoint"),
+    token: str | None = Header(default=None, alias="X-QingCloud-Worker-Token"),
+):
+    """Release a claimed job that this worker cannot safely execute, without recording a failed attempt."""
+    authenticate_worker(worker_id, token)
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.state != JobState.running or job.assigned_worker_id != worker_id or job.attempts != attempt:
+        raise HTTPException(status_code=409, detail="Worker lease is stale or no longer assigned")
+    updated = job.model_copy(deep=True)
+    updated.state = JobState.queued
+    updated.assigned_worker_id = None
+    updated.assigned_gpu_index = None
+    updated.reserved_gpu_vram_mb = 0
+    updated.reserved_cpu_cores = 0
+    updated.reserved_ram_mb = 0
+    updated.declined_attempts += 1
+    updated.progress = 0
+    updated.result = None
+    updated.error = "Worker declined job: " + data.reason
+    updated.updated_at = now()
+    if not save_job_if_current_attempt(updated, worker_id, attempt):
+        raise HTTPException(status_code=409, detail="Worker lease expired or was superseded")
+    jobs[job_id] = updated
+    return updated
+
+
 @app.post("/v1/jobs/{job_id}/complete", response_model=JobRecord)
 def complete_job(
     job_id: str,
@@ -581,7 +614,7 @@ def complete_job(
     else:
         updated.result = None
         updated.error = data.error or "Worker reported an unsuccessful attempt"
-        if updated.attempts < updated.max_attempts:
+        if updated.attempts - updated.declined_attempts < updated.max_attempts:
             updated.state = JobState.queued
             updated.assigned_worker_id = None
             updated.assigned_gpu_index = None
