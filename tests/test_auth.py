@@ -93,14 +93,14 @@ def test_only_assigned_worker_can_update_job():
     )
     job_id = job["job_id"]
     denied = client.post(
-        f"/v1/jobs/{job_id}/complete?worker_id={other_worker}",
+        f"/v1/jobs/{job_id}/complete?worker_id={other_worker}&attempt={claim.json()["attempts"]}",
         headers={"X-QingCloud-Worker-Token": other_token},
         json={"success": True, "result": {"ok": True}},
     )
-    assert denied.status_code == 403
+    assert denied.status_code == 409
 
     allowed = client.post(
-        f"/v1/jobs/{job_id}/complete?worker_id={assigned_worker}",
+        f"/v1/jobs/{job_id}/complete?worker_id={assigned_worker}&attempt={claim.json()["attempts"]}",
         headers={"X-QingCloud-Worker-Token": assigned_token},
         json={"success": True, "result": {"ok": True}},
     )
@@ -137,7 +137,7 @@ def test_failed_job_is_requeued_until_attempt_limit():
     assert first_claim.status_code == 200
     job_id = job["job_id"]
     failed = client.post(
-        f"/v1/jobs/{job_id}/complete?worker_id={worker_id}",
+        f"/v1/jobs/{job_id}/complete?worker_id={worker_id}&attempt={second_claim.json()["attempts"]}&attempt={first_claim.json()["attempts"]}",
         headers=headers,
         json={"success": False, "error": "temporary failure"},
     )
@@ -174,7 +174,7 @@ def test_distributed_sum_splits_jobs_and_aggregates_verified_results():
         result = {"start": start, "end": end, "count": end - start + 1,
                   "sum": (start + end) * (end - start + 1) // 2}
         completed = client.post(
-            f"/v1/jobs/{claimed['job_id']}/complete?worker_id={worker_id}",
+            f"/v1/jobs/{claimed['job_id']}/complete?worker_id={worker_id}&attempt={claimed['attempts']}",
             headers=headers,
             json={"success": True, "result": result},
         )
@@ -198,7 +198,7 @@ def test_distributed_sum_rejects_worker_result_mismatch():
     task = client.post("/v1/distributed/sum", headers={"X-QingCloud-Admin-Token": "test-admin-secret"}, json={"start": 1, "end": 5, "chunk_size": 5}).json()
     claimed = client.post(f"/v1/workers/{worker_id}/claim", headers=headers).json()
     client.post(
-        f"/v1/jobs/{claimed['job_id']}/complete?worker_id={worker_id}",
+        f"/v1/jobs/{claimed['job_id']}/complete?worker_id={worker_id}&attempt={claimed['attempts']}",
         headers=headers,
         json={"success": True, "result": {"start": 1, "end": 5, "count": 5, "sum": 999}},
     )
@@ -259,7 +259,7 @@ def test_two_workers_claim_distinct_chunks_and_complete_distributed_sum():
             "sum": (start + end) * (end - start + 1) // 2,
         }
         completed = client.post(
-            f"/v1/jobs/{job['job_id']}/complete?worker_id={worker_id}",
+            f"/v1/jobs/{job['job_id']}/complete?worker_id={worker_id}&attempt={second['attempts']}&attempt={job['attempts']}",
             headers={"X-QingCloud-Worker-Token": token},
             json={"success": True, "result": result},
         )
@@ -663,7 +663,7 @@ def test_gpu_vram_is_reserved_per_device_until_job_finishes():
     third = client.post("/v1/jobs", headers=admin, json={"kind": "diagnostic", "required_gpu_vram_mb": 8000}).json()
     assert client.post(f"/v1/workers/{worker_id}/claim", headers=headers).json() is None
     completed = client.post(
-        f"/v1/jobs/{claim1['job_id']}/complete?worker_id={worker_id}",
+        f"/v1/jobs/{claim1['job_id']}/complete?worker_id={worker_id}&attempt={claim1['attempts']}",
         headers=headers, json={"success": True, "result": {"ok": True}},
     )
     assert completed.status_code == 200
