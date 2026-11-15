@@ -166,6 +166,8 @@ def clear_all() -> None:
     """Clear persistent state. Intended for tests and explicit maintenance."""
     with _LOCK, _CONNECTION:
         _CONNECTION.execute("DELETE FROM worker_tokens")
+        _CONNECTION.execute("DELETE FROM worker_job_events")
+        _CONNECTION.execute("DELETE FROM gpu_events")
         _CONNECTION.execute("DELETE FROM jobs")
         _CONNECTION.execute("DELETE FROM workers")
 
