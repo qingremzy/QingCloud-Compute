@@ -151,13 +151,23 @@ def save_config(path: Path, data: dict[str, str]) -> None:
     except OSError:
         pass
 
-def load_or_enroll(base_url: str, config_path: Path, enrollment_token: str) -> dict[str, str]:
+def load_or_enroll(
+    base_url: str,
+    config_path: Path,
+    enrollment_token: str = "",
+    invitation_token: str = "",
+) -> dict[str, str]:
     if config_path.exists():
         config = json.loads(config_path.read_text(encoding="utf-8"))
         if config.get("worker_id") and config.get("access_token"):
             return config
-    response = request_json(base_url, "/v1/workers/register", "POST", discover_worker(),
-        {"X-QingCloud-Enrollment-Token": enrollment_token})
+    if invitation_token:
+        headers = {"X-QingCloud-Invitation-Token": invitation_token}
+    elif enrollment_token:
+        headers = {"X-QingCloud-Enrollment-Token": enrollment_token}
+    else:
+        raise RuntimeError("Set QCLOUD_INVITATION_TOKEN or QCLOUD_ENROLLMENT_TOKEN for first enrollment.")
+    response = request_json(base_url, "/v1/workers/register", "POST", discover_worker(), headers)
     config = {"worker_id": response["worker"]["worker_id"], "access_token": response["access_token"]}
     save_config(config_path, config)
     return config
@@ -216,9 +226,10 @@ def run_agent(base_url: str, config_path: Path, interval: int, once: bool = Fals
     if not base_url.startswith("https://") and not base_url.startswith(("http://127.0.0.1", "http://localhost")):
         raise RuntimeError("Use HTTPS for remote servers. HTTP is allowed only on localhost.")
     enrollment_token = os.getenv("QCLOUD_ENROLLMENT_TOKEN", "")
-    if not config_path.exists() and not enrollment_token:
-        raise RuntimeError("Set QCLOUD_ENROLLMENT_TOKEN for first enrollment.")
-    config = load_or_enroll(base_url, config_path, enrollment_token)
+    invitation_token = os.getenv("QCLOUD_INVITATION_TOKEN", "")
+    if not config_path.exists() and not (enrollment_token or invitation_token):
+        raise RuntimeError("Set QCLOUD_INVITATION_TOKEN or QCLOUD_ENROLLMENT_TOKEN for first enrollment.")
+    config = load_or_enroll(base_url, config_path, enrollment_token, invitation_token)
     while True:
         inventory = send_capabilities(base_url, config)
         telemetry = send_telemetry(base_url, config)
