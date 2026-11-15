@@ -949,25 +949,39 @@ def test_decline_rejects_wrong_worker_and_stale_attempt():
         headers={"X-QingCloud-Admin-Token": "test-admin-secret"},
         json={"kind": "echo"},
     ).json()
-    claimed = client.post(
-        f"/v1/workers/{worker_a}/claim",
-        headers={"X-QingCloud-Worker-Token": token_a},
-    ).json()
+    claimed = None
+    assigned_worker = None
+    assigned_token = None
+    for candidate_id, candidate_token in ((worker_a, token_a), (worker_b, token_b)):
+        response = client.post(
+            f"/v1/workers/{candidate_id}/claim",
+            headers={"X-QingCloud-Worker-Token": candidate_token},
+        )
+        assert response.status_code == 200
+        if response.json() is not None:
+            claimed = response.json()
+            assigned_worker = candidate_id
+            assigned_token = candidate_token
+            break
+    assert claimed is not None
+    other_worker, other_token = (
+        (worker_b, token_b) if assigned_worker == worker_a else (worker_a, token_a)
+    )
     denied = client.post(
-        f"/v1/jobs/{created['job_id']}/decline?worker_id={worker_b}&attempt={claimed['attempts']}",
-        headers={"X-QingCloud-Worker-Token": token_b},
+        f"/v1/jobs/{created['job_id']}/decline?worker_id={other_worker}&attempt={claimed['attempts']}",
+        headers={"X-QingCloud-Worker-Token": other_token},
         json={"reason": "not my job"},
     )
     assert denied.status_code == 409
     accepted = client.post(
-        f"/v1/jobs/{created['job_id']}/decline?worker_id={worker_a}&attempt={claimed['attempts']}",
-        headers={"X-QingCloud-Worker-Token": token_a},
+        f"/v1/jobs/{created['job_id']}/decline?worker_id={assigned_worker}&attempt={claimed['attempts']}",
+        headers={"X-QingCloud-Worker-Token": assigned_token},
         json={"reason": "cannot execute"},
     )
     assert accepted.status_code == 200
     stale = client.post(
-        f"/v1/jobs/{created['job_id']}/decline?worker_id={worker_a}&attempt={claimed['attempts']}",
-        headers={"X-QingCloud-Worker-Token": token_a},
+        f"/v1/jobs/{created['job_id']}/decline?worker_id={assigned_worker}&attempt={claimed['attempts']}",
+        headers={"X-QingCloud-Worker-Token": assigned_token},
         json={"reason": "stale retry"},
     )
     assert stale.status_code == 409
