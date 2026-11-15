@@ -588,6 +588,8 @@ def complete_job(
         updated.reserved_gpu_vram_mb = 0
     if data.success:
         updated.reserved_gpu_vram_mb = 0
+    updated.reserved_cpu_cores = 0
+    updated.reserved_ram_mb = 0
     updated.updated_at = now()
     event_type = "succeeded" if data.success else "failed"
     if not save_job_if_current_attempt(updated, worker_id, attempt, event_type):
