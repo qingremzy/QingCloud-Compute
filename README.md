@@ -80,6 +80,14 @@ Administrators can issue a one-time provider invitation with the admin-authentic
 
 A provider enrolls with `POST /v1/workers/register` using the `X-QingCloud-Invitation-Token` header instead of the shared enrollment header. Each invitation can enroll exactly one worker and is rejected after expiry or redemption. Existing `X-QingCloud-Enrollment-Token` enrollment remains available for deployments that configure `QCLOUD_ENROLLMENT_TOKEN`.
 
+The built-in worker agent accepts either `QCLOUD_INVITATION_TOKEN` or `QCLOUD_ENROLLMENT_TOKEN`. For a one-time invitation, set `QCLOUD_URL` and `QCLOUD_INVITATION_TOKEN`, then run:
+
+```bash
+python -m worker_agent.agent --once
+```
+
+The agent exchanges the invitation for its own worker access token and saves that token in `~/.qingcloud/worker.json`. After enrollment, remove the invitation from the environment. Subsequent runs reuse the saved worker identity and token.
+
 Keep invitation tokens private and transmit them only over HTTPS when connecting remotely. An invitation authorizes enrollment only. It does not grant admin access or make arbitrary workload execution safe.
 
 
