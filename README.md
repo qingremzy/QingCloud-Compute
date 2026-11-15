@@ -132,3 +132,8 @@ Open `/dashboard` on the running coordinator to use the browser control room. En
 GPU jobs request a minimum `required_gpu_vram_mb`. At claim time, the coordinator selects one physical GPU device on that worker and records `assigned_gpu_index` plus `reserved_gpu_vram_mb` on the job. While the job is running, later claims subtract reservations for that same worker/device from its reported free-VRAM snapshot. A reservation is released automatically when the job succeeds, fails/requeues, or its lease is recovered, because only currently running jobs count. NVIDIA workers report stable `nvidia-smi` device indexes. For older or non-NVIDIA reports without an index, the coordinator uses the device position in the latest inventory.
 
 Reservations are conservative scheduler bookkeeping, not hardware-enforced isolation. They do not stop another local process from consuming GPU memory, and fresh telemetry may already reflect memory used by a running workload, so reservation accounting can temporarily understate headroom. GPU workloads are not yet executable through the built-in worker runtime, which currently supports bounded CPU-safe task types only. No real GPU provider has been connected or hardware-tested.
+
+
+## Live GPU reservation dashboard
+
+The admin dashboard now shows active GPU reservations by physical device, each device's reported free VRAM less the coordinator's active reservation estimate, and the GPU index plus reserved amount on each assigned job. Reservation totals are derived from jobs currently in the running state. Completion, retry after failure, and expired-lease recovery clear the active reservation amount. These figures are scheduler estimates, not hardware-enforced memory isolation or a live guarantee of available VRAM.
