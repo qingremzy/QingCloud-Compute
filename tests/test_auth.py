@@ -255,3 +255,13 @@ def test_job_submission_and_inspection_require_admin_token():
     assert client.post("/v1/jobs", json={"kind": "diagnostic"}).status_code == 401
     assert client.get("/v1/jobs").status_code == 401
     assert client.get("/v1/workers").status_code == 401
+
+
+def test_browser_dashboard_page_is_served_without_embedded_admin_secret():
+    response = client.get("/dashboard")
+    assert response.status_code == 200
+    assert "QINGCLOUD" in response.text
+    assert "X-QingCloud-Admin-Token" in response.text
+    assert "localStorage" not in response.text
+    assert "sessionStorage" not in response.text
+    assert "test-admin-secret" not in response.text
