@@ -8,9 +8,9 @@ from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
-from qingcloud.db import claim_job_atomic, init_db, load_state, save_job, save_worker, save_worker_token, record_gpu_event, list_gpu_events, record_worker_job_event, worker_reliability_stats, create_worker_invitation, redeem_worker_invitation, record_worker_approval_event, list_worker_approval_events, recover_expired_jobs_persisted, save_job_if_current_attempt
+from qingcloud.db import claim_job_atomic, init_db, load_state, save_job, save_worker, save_worker_token, record_gpu_event, list_gpu_events, record_worker_job_event, worker_reliability_stats, create_worker_invitation, redeem_worker_invitation, record_worker_approval_event, list_worker_approval_events, recover_expired_jobs_persisted, save_job_if_current_attempt, record_worker_telemetry, latest_worker_telemetry, list_worker_telemetry
 from qingcloud.models import (
-    DistributedSumCreate, JobCompletion, JobCreate, JobHeartbeat, JobRecord, JobState,
+    DistributedSumCreate, JobCompletion, JobCreate, JobHeartbeat, JobRecord, JobState, WorkerTelemetry,
     WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration, WorkerState, WorkerInvitationCreate, WorkerApprovalUpdate, WorkerApprovalStatus, WorkerCapacityUpdate,
 )
 from qingcloud.scheduler import recover_expired_jobs, reconcile_worker_presence
@@ -131,6 +131,7 @@ def dashboard(admin_token: str | None = Header(default=None, alias="X-QingCloud-
             "max_concurrent_jobs": worker.max_concurrent_jobs, "last_seen_at": worker.last_seen_at,
             "capabilities_updated_at": worker.capabilities_updated_at,
             "gpu_health": assess_worker_gpu_health(worker, now()),
+            "resource_telemetry": latest_worker_telemetry(worker.worker_id),
             "reliability": worker_reliability_stats(worker.worker_id),
             "cpu_cores": worker.cpu_cores, "ram_mb": worker.ram_mb,
             "gpus": gpu_rows, "running_jobs": len(running),
@@ -312,6 +313,36 @@ def worker_heartbeat(
     worker.state = WorkerState.online
     save_worker(worker)
     return {"ok": True, "last_seen_at": worker.last_seen_at}
+
+
+@app.post("/v1/workers/{worker_id}/telemetry")
+def submit_worker_telemetry(
+    worker_id: str,
+    data: WorkerTelemetry,
+    token: str | None = Header(default=None, alias="X-QingCloud-Worker-Token"),
+):
+    """Accept an authenticated resource snapshot from an enrolled worker."""
+    worker = authenticate_worker(worker_id, token)
+    snapshot = data.model_dump()
+    if snapshot["ram_used_mb"] + snapshot["ram_available_mb"] > snapshot["ram_total_mb"] + 256:
+        raise HTTPException(status_code=422, detail="RAM used plus available exceeds reported total")
+    worker.last_seen_at = now()
+    worker.state = WorkerState.online
+    save_worker(worker)
+    return record_worker_telemetry(worker_id, snapshot, worker.last_seen_at)
+
+
+@app.get("/v1/workers/{worker_id}/telemetry")
+def get_worker_telemetry(
+    worker_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    admin_token: str | None = Header(default=None, alias="X-QingCloud-Admin-Token"),
+):
+    verify_admin_token(admin_token)
+    if worker_id not in workers:
+        raise HTTPException(status_code=404, detail="Worker not found")
+    samples = list_worker_telemetry(worker_id, limit)
+    return {"worker_id": worker_id, "samples": samples, "total": len(samples)}
 
 
 @app.put("/v1/workers/{worker_id}/capabilities", response_model=WorkerRecord)
