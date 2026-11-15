@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import sqlite3
 from datetime import datetime, timezone
 from threading import RLock
@@ -32,6 +33,17 @@ def init_db() -> None:
             )
         """)
         _CONNECTION.execute("""
+            CREATE TABLE IF NOT EXISTS gpu_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                worker_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                before_json TEXT NOT NULL,
+                after_json TEXT NOT NULL
+            )
+        """)
+        _CONNECTION.execute("CREATE INDEX IF NOT EXISTS idx_gpu_events_worker ON gpu_events(worker_id, event_id DESC)")
+        _CONNECTION.execute("""
             CREATE TABLE IF NOT EXISTS worker_tokens (
                 worker_id TEXT PRIMARY KEY,
                 token_hash TEXT NOT NULL,
@@ -56,6 +68,28 @@ def save_job(job: JobRecord) -> None:
             "ON CONFLICT(job_id) DO UPDATE SET data_json=excluded.data_json",
             (job.job_id, job.model_dump_json()),
         )
+
+
+def record_gpu_event(worker_id: str, event_type: str, before: list[dict[str, Any]], after: list[dict[str, Any]], created_at: datetime | None = None) -> None:
+    stamp = (created_at or datetime.now(timezone.utc)).isoformat()
+    with _LOCK, _CONNECTION:
+        _CONNECTION.execute(
+            "INSERT INTO gpu_events(worker_id, event_type, created_at, before_json, after_json) VALUES(?, ?, ?, ?, ?)",
+            (worker_id, event_type, stamp, json.dumps(before, sort_keys=True), json.dumps(after, sort_keys=True)),
+        )
+
+
+def list_gpu_events(worker_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    with _LOCK:
+        rows = _CONNECTION.execute(
+            "SELECT event_id, worker_id, event_type, created_at, before_json, after_json FROM gpu_events WHERE worker_id = ? ORDER BY event_id DESC LIMIT ?",
+            (worker_id, max(1, min(limit, 200))),
+        ).fetchall()
+    return [{
+        "event_id": row["event_id"], "worker_id": row["worker_id"],
+        "event_type": row["event_type"], "created_at": row["created_at"],
+        "before": json.loads(row["before_json"]), "after": json.loads(row["after_json"]),
+    } for row in rows]
 
 
 def save_worker_token(worker_id: str, token_hash: str) -> None:
