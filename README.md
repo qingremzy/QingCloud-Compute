@@ -151,3 +151,8 @@ Every successful job claim increments a monotonically increasing attempt number.
 ### Live provider resource telemetry
 
 The worker agent samples host CPU utilization and RAM total, used, available, and percentage through `psutil`, plus available per-GPU utilization and VRAM readings from the existing NVIDIA probe. It sends these snapshots over the authenticated `POST /v1/workers/{worker_id}/telemetry` endpoint. The coordinator stores timestamped samples in SQLite. Administrators can inspect recent samples with `GET /v1/workers/{worker_id}/telemetry?limit=50`, and the dashboard API includes each worker's latest sample. History is capped per request (1–200 samples) but the prototype does not yet prune old telemetry rows automatically. Values are self-reported host telemetry, not hardware attestation or resource isolation. No real provider has been connected or benchmarked.
+
+
+### Resource-aware scheduling
+
+When a worker has a resource telemetry sample no older than 120 seconds, scheduling adds live CPU utilization and available RAM to its suitability score. CPU pressure and RAM headroom influence both CPU and GPU job ranking, alongside existing reliability, concurrency, GPU free-memory, utilization, and reservation checks. Missing, malformed, or stale samples receive a neutral resource score rather than being treated as current. These scores are heuristics based on self-reported telemetry and do not guarantee workload fit or enforce CPU/RAM limits.
