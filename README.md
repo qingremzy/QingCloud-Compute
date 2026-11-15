@@ -139,7 +139,7 @@ Open `/dashboard` on the running coordinator to use the browser control room. En
 
 GPU jobs request a minimum `required_gpu_vram_mb`. At claim time, the coordinator selects one physical GPU device on that worker and records `assigned_gpu_index` plus `reserved_gpu_vram_mb` on the job. While the job is running, later claims subtract reservations for that same worker/device from its reported free-VRAM snapshot. A reservation is released automatically when the job succeeds, fails/requeues, or its lease is recovered, because only currently running jobs count. NVIDIA workers report stable `nvidia-smi` device indexes. For older or non-NVIDIA reports without an index, the coordinator uses the device position in the latest inventory.
 
-Reservations are conservative scheduler bookkeeping, not hardware-enforced isolation. They do not stop another local process from consuming GPU memory, and fresh telemetry may already reflect memory used by a running workload, so reservation accounting can temporarily understate headroom. GPU workloads are not yet executable through the built-in worker runtime, which currently supports bounded CPU-safe task types only. No real GPU provider has been connected or hardware-tested.
+Reservations are conservative scheduler bookkeeping, not hardware-enforced isolation. They do not stop another local process from consuming GPU memory, and fresh telemetry may already reflect memory used by a running workload, so reservation accounting can temporarily understate headroom. The worker runtime now includes one bounded NVIDIA CUDA proof workload, `gpu_matrix_multiply`, which requires a CUDA-enabled PyTorch installation on the provider and an explicit per-device assignment. It is a smoke test only. No real GPU provider has been connected or hardware-tested, and no model inference or video-generation workload is supported yet.
 
 
 ## Live GPU reservation dashboard
@@ -201,3 +201,10 @@ The YTAgent API wraps these as authenticated `GET /api/compute/status`, `POST /a
 ### Job source attribution
 
 Jobs carry a short `source` label (default `api`) so an integrated application can identify its own workloads in the admin dashboard. Distributed tasks preserve that source label on every chunk and in task status. This field is descriptive metadata, not an authorization boundary. YTAgent submits its first distributed CPU verification task with `source="ytagent"`.
+
+
+## Container deployment and first CUDA smoke test
+
+A Dockerfile and Docker Compose configuration are provided for a persistent, non-root coordinator deployment. The compose service binds only to localhost and stores SQLite data in a named volume. See [the self-hosting deployment guide](docs/SELF_HOSTED_DEPLOYMENT.md) for HTTPS reverse-proxy, backup, YTAgent connection, and provider-enrollment steps. The deployment files do not provision a free public host or GPU hardware.
+
+The worker agent advertises the `gpu_execution=cuda_torch` label only when PyTorch reports CUDA available. The bounded `gpu_matrix_multiply` task runs a matrix multiplication on the coordinator-assigned NVIDIA device and returns device name, elapsed time, and checksum. It accepts matrix sizes from 32 through 2048 and requires a non-zero `required_gpu_vram_mb` plus the `gpu_execution=cuda_torch` required label. A worker must have a compatible PyTorch/CUDA environment installed by its owner. This proves only that a CUDA operation can execute on a real provider. It does not run Wan, Kokoro, FFmpeg, arbitrary Python, or YTAgent video generation.
