@@ -190,9 +190,9 @@ def claim_one_job(base_url: str, config: dict[str, str]) -> bool:
         "POST", payload={"progress": 10, "message": "Validating approved built-in task"}, headers=headers)
     resource_error = check_job_resources(job)
     if resource_error:
-        request_json(base_url, "/v1/jobs/" + job_id + "/complete?worker_id=" + worker_id + "&attempt=" + str(attempt),
-            "POST", payload={"success": False, "result": {}, "error": resource_error}, headers=headers)
-        print(json.dumps({"job_id": job_id, "job_kind": job.get("kind"), "success": False, "error": resource_error}))
+        request_json(base_url, "/v1/jobs/" + job_id + "/decline?worker_id=" + worker_id + "&attempt=" + str(attempt),
+            "POST", payload={"reason": resource_error}, headers=headers)
+        print(json.dumps({"job_id": job_id, "job_kind": job.get("kind"), "declined": True, "reason": resource_error}))
         return False
     success, result, error = execute_safe_job(job.get("kind", ""), job.get("payload") or {})
     request_json(base_url, "/v1/jobs/" + job_id + "/complete?worker_id=" + worker_id + "&attempt=" + str(attempt),
