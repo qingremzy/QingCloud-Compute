@@ -231,6 +231,26 @@ def claim_job_atomic(worker: WorkerRecord, jobs: dict[str, JobRecord], workers: 
             if claimed is None:
                 _CONNECTION.commit()
                 return None
+            if claimed.required_gpu_vram_mb:
+                reserved_by_device: dict[int, int] = {}
+                for active in persisted_jobs:
+                    if active.state == JobState.running and active.assigned_worker_id == worker.worker_id and active.assigned_gpu_index is not None:
+                        reserved_by_device[active.assigned_gpu_index] = reserved_by_device.get(active.assigned_gpu_index, 0) + active.reserved_gpu_vram_mb
+                device_choices = []
+                for position, gpu in enumerate(worker.gpus):
+                    device_index = gpu.device_index if gpu.device_index is not None else position
+                    reported_free = gpu.free_vram_mb if gpu.free_vram_mb is not None else gpu.vram_mb
+                    effective_free = max(0, reported_free - reserved_by_device.get(device_index, 0))
+                    if effective_free >= claimed.required_gpu_vram_mb:
+                        device_choices.append((effective_free, device_index))
+                if not device_choices:
+                    _CONNECTION.commit()
+                    return None
+                _, claimed.assigned_gpu_index = max(device_choices, key=lambda item: (item[0], -item[1]))
+                claimed.reserved_gpu_vram_mb = claimed.required_gpu_vram_mb
+            else:
+                claimed.assigned_gpu_index = None
+                claimed.reserved_gpu_vram_mb = 0
             claimed.state = JobState.running
             claimed.assigned_worker_id = worker.worker_id
             claimed.attempts += 1
