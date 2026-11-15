@@ -384,7 +384,7 @@ def test_worker_reliability_counts_attempt_outcomes_without_inflating_claims():
     assert after_claim["sample_size"] == 0
 
     failed = client.post(
-        f"/v1/jobs/{job['job_id']}/complete?worker_id={worker_id}&attempt={job['attempts']}",
+        f"/v1/jobs/{job['job_id']}/complete?worker_id={worker_id}&attempt={claimed['attempts']}",
         headers=headers, json={"success": False, "error": "temporary"},
     )
     assert failed.status_code == 200
