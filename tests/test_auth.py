@@ -785,3 +785,48 @@ def test_expired_gpu_lease_is_recovered_and_reservation_persisted_as_released():
     assert persisted.state.value == "queued"
     assert persisted.reserved_gpu_vram_mb == 0
     assert persisted.assigned_gpu_index is None
+
+
+def test_stale_worker_attempt_cannot_heartbeat_or_complete_reassigned_job():
+    worker_id, token = enroll("fencing-worker")
+    headers = {"X-QingCloud-Worker-Token": token}
+    admin = {"X-QingCloud-Admin-Token": "test-admin-secret"}
+    created = client.post(
+        "/v1/jobs", headers=admin,
+        json={"kind": "echo", "payload": {"text": "fencing"}, "max_attempts": 3},
+    ).json()
+    first = client.post(f"/v1/workers/{worker_id}/claim", headers=headers).json()
+    assert first["attempts"] == 1
+
+    # Expire attempt 1, then let the same worker reclaim it as attempt 2.
+    from qingcloud.main import jobs
+    jobs[created["job_id"]].updated_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+    save_job(jobs[created["job_id"]])
+    second = client.post(f"/v1/workers/{worker_id}/claim", headers=headers).json()
+    assert second["job_id"] == created["job_id"]
+    assert second["attempts"] == 2
+
+    stale_heartbeat = client.post(
+        f"/v1/jobs/{created['job_id']}/heartbeat?worker_id={worker_id}&attempt=1",
+        headers=headers,
+        json={"progress": 50, "message": "late attempt"},
+    )
+    assert stale_heartbeat.status_code == 409
+
+    stale_completion = client.post(
+        f"/v1/jobs/{created['job_id']}/complete?worker_id={worker_id}&attempt=1",
+        headers=headers,
+        json={"success": True, "result": {"from": "stale attempt"}},
+    )
+    assert stale_completion.status_code == 409
+    assert jobs[created["job_id"]].state.value == "running"
+    assert jobs[created["job_id"]].attempts == 2
+
+    current_completion = client.post(
+        f"/v1/jobs/{created['job_id']}/complete?worker_id={worker_id}&attempt=2",
+        headers=headers,
+        json={"success": True, "result": {"from": "current attempt"}},
+    )
+    assert current_completion.status_code == 200
+    assert current_completion.json()["state"] == "succeeded"
+    assert current_completion.json()["result"]["from"] == "current attempt"
