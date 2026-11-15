@@ -1,4 +1,4 @@
-from worker_agent.agent import check_job_resources, discover_worker, detect_gpus, process_job_batch, resource_snapshot
+from worker_agent.agent import check_job_resources, discover_worker, detect_gpus, load_or_enroll, process_job_batch, resource_snapshot
 
 def test_discovery_reports_valid_cpu_and_ram(monkeypatch):
     monkeypatch.setattr("worker_agent.agent.memory_mb", lambda: 8192)
@@ -116,3 +116,32 @@ def test_local_resource_preflight_uses_live_snapshot_by_default(monkeypatch):
         "cpu_cores": 4, "ram_available_mb": 4096, "gpus": []
     })
     assert check_job_resources({"required_cpu_cores": 2, "required_ram_mb": 2048}) is None
+
+
+
+def test_worker_can_enroll_with_one_time_invitation_token(monkeypatch, tmp_path):
+    captured = {}
+    def fake_request(base_url, endpoint, method, payload=None, headers=None):
+        captured.update({"base_url": base_url, "endpoint": endpoint, "method": method, "headers": headers})
+        return {"worker": {"worker_id": "worker-123"}, "access_token": "worker-access"}
+    monkeypatch.setattr("worker_agent.agent.request_json", fake_request)
+    config_path = tmp_path / "worker.json"
+    config = load_or_enroll("https://compute.example.com", config_path, invitation_token="one-time-invite")
+    assert captured["headers"] == {"X-QingCloud-Invitation-Token": "one-time-invite"}
+    assert config == {"worker_id": "worker-123", "access_token": "worker-access"}
+    assert config_path.exists()
+
+
+def test_worker_enrollment_prefers_invitation_over_shared_enrollment_secret(monkeypatch, tmp_path):
+    captured = {}
+    monkeypatch.setattr("worker_agent.agent.request_json", lambda *args, **kwargs: (
+        captured.update({"headers": kwargs.get("headers") or args[-1]}) or
+        {"worker": {"worker_id": "worker-456"}, "access_token": "worker-access"}
+    ))
+    load_or_enroll(
+        "https://compute.example.com",
+        tmp_path / "worker.json",
+        enrollment_token="shared-enrollment",
+        invitation_token="one-time-invite",
+    )
+    assert captured["headers"] == {"X-QingCloud-Invitation-Token": "one-time-invite"}
