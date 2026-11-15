@@ -40,7 +40,7 @@ The server stores only a SHA-256 hash of each worker token. If a worker loses it
 
 ## Worker agent (discovery-only v0.1)
 
-The worker_agent package detects CPU/RAM and available GPU inventory, enrolls a machine, saves its worker token locally, and sends authenticated heartbeats. It deliberately does not claim or execute jobs. For a remote server, use HTTPS.
+The worker_agent package detects CPU/RAM and available GPU inventory, enrolls a machine, saves its worker token locally, refreshes its hardware inventory through an authenticated endpoint, and sends authenticated heartbeats. It deliberately does not claim or execute jobs. For a remote server, use HTTPS.
 
 ```bash
 export QCLOUD_URL="https://your-qingcloud-host"
@@ -67,7 +67,8 @@ SQLite persistence is local to the machine running the control plane. It does no
 - [ ] Durable queue with concurrency-safe claiming and retry recovery
 - [x] Worker agent for hardware discovery and authenticated heartbeat (no job execution)
 - [ ] Secure, sandboxed worker runtime
-- [ ] GPU capability probing (CUDA/ROCm/Metal where available)
+- [x] Initial NVIDIA GPU capability probing and authenticated inventory refresh
+- [ ] Broader GPU capability probing (ROCm/Metal and richer telemetry)
 - [ ] Multi-worker scheduling and retry policy
 - [ ] Shared storage backend and dashboard
 - [ ] YTAgent integration
