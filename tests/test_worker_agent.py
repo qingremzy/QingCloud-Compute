@@ -1,4 +1,4 @@
-from worker_agent.agent import discover_worker, detect_gpus, process_job_batch, resource_snapshot
+from worker_agent.agent import check_job_resources, discover_worker, detect_gpus, process_job_batch, resource_snapshot
 
 def test_discovery_reports_valid_cpu_and_ram(monkeypatch):
     monkeypatch.setattr("worker_agent.agent.memory_mb", lambda: 8192)
@@ -87,3 +87,32 @@ def test_resource_snapshot_reports_cpu_ram_and_gpu_metrics(monkeypatch):
     assert data["ram_available_mb"] == 5120
     assert data["ram_percent"] == 37.5
     assert data["gpus"][0]["utilization_percent"] == 55.0
+
+
+
+def test_local_resource_preflight_accepts_job_within_capacity():
+    snapshot = {
+        "cpu_cores": 8,
+        "ram_available_mb": 8192,
+        "gpus": [{"device_index": 0, "free_vram_mb": 12000}],
+    }
+    job = {"required_cpu_cores": 4, "required_ram_mb": 4096, "required_gpu_vram_mb": 8000}
+    assert check_job_resources(job, snapshot) is None
+
+
+def test_local_resource_preflight_rejects_insufficient_cpu_ram_and_gpu():
+    snapshot = {
+        "cpu_cores": 2,
+        "ram_available_mb": 1024,
+        "gpus": [{"device_index": 0, "free_vram_mb": 2048}],
+    }
+    assert "CPU capacity" in check_job_resources({"required_cpu_cores": 4}, snapshot)
+    assert "available RAM" in check_job_resources({"required_ram_mb": 4096}, snapshot)
+    assert "GPU" in check_job_resources({"required_gpu_vram_mb": 4096}, snapshot)
+
+
+def test_local_resource_preflight_uses_live_snapshot_by_default(monkeypatch):
+    monkeypatch.setattr("worker_agent.agent.resource_snapshot", lambda: {
+        "cpu_cores": 4, "ram_available_mb": 4096, "gpus": []
+    })
+    assert check_job_resources({"required_cpu_cores": 2, "required_ram_mb": 2048}) is None
