@@ -55,6 +55,14 @@ def init_db() -> None:
         """)
         _CONNECTION.execute("CREATE INDEX IF NOT EXISTS idx_worker_job_events_worker ON worker_job_events(worker_id, event_id DESC)")
         _CONNECTION.execute("""
+            CREATE TABLE IF NOT EXISTS worker_invitations (
+                token_hash TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                used_at TEXT
+            )
+        """)
+        _CONNECTION.execute("""
             CREATE TABLE IF NOT EXISTS worker_tokens (
                 worker_id TEXT PRIMARY KEY,
                 token_hash TEXT NOT NULL,
@@ -225,3 +233,46 @@ def claim_job_atomic(worker: WorkerRecord, jobs: dict[str, JobRecord], workers: 
         except Exception:
             _CONNECTION.rollback()
             raise
+
+
+def create_worker_invitation(token_hash: str, expires_at: datetime, created_at: datetime | None = None) -> None:
+    """Persist only the hash of a one-time worker invitation."""
+    stamp = (created_at or datetime.now(timezone.utc)).isoformat()
+    with _LOCK, _CONNECTION:
+        _CONNECTION.execute(
+            "INSERT INTO worker_invitations(token_hash, created_at, expires_at, used_at) VALUES(?, ?, ?, NULL)",
+            (token_hash, stamp, expires_at.isoformat()),
+        )
+
+
+def redeem_worker_invitation(token_hash: str, current_time: datetime | None = None) -> bool:
+    """Atomically consume a valid, unused invitation exactly once."""
+    stamp = (current_time or datetime.now(timezone.utc)).isoformat()
+    with _LOCK:
+        _CONNECTION.execute("BEGIN IMMEDIATE")
+        try:
+            row = _CONNECTION.execute(
+                "SELECT expires_at, used_at FROM worker_invitations WHERE token_hash = ?",
+                (token_hash,),
+            ).fetchone()
+            if row is None or row["used_at"] is not None or row["expires_at"] <= stamp:
+                _CONNECTION.commit()
+                return False
+            cursor = _CONNECTION.execute(
+                "UPDATE worker_invitations SET used_at = ? WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?",
+                (stamp, token_hash, stamp),
+            )
+            _CONNECTION.commit()
+            return cursor.rowcount == 1
+        except Exception:
+            _CONNECTION.rollback()
+            raise
+
+
+def invitation_token_hash_exists(token_hash: str) -> bool:
+    """Test helper that never exposes invitation plaintext."""
+    with _LOCK:
+        return _CONNECTION.execute(
+            "SELECT 1 FROM worker_invitations WHERE token_hash = ?",
+            (token_hash,),
+        ).fetchone() is not None
