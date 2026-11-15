@@ -44,6 +44,15 @@ def init_db() -> None:
         """)
         _CONNECTION.execute("CREATE INDEX IF NOT EXISTS idx_gpu_events_worker ON gpu_events(worker_id, event_id DESC)")
         _CONNECTION.execute("""
+            CREATE TABLE IF NOT EXISTS worker_telemetry (
+                telemetry_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                worker_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                data_json TEXT NOT NULL
+            )
+        """)
+        _CONNECTION.execute("CREATE INDEX IF NOT EXISTS idx_worker_telemetry_worker ON worker_telemetry(worker_id, telemetry_id DESC)")
+        _CONNECTION.execute("""
             CREATE TABLE IF NOT EXISTS worker_job_events (
                 event_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 job_id TEXT NOT NULL,
@@ -123,6 +132,38 @@ def list_gpu_events(worker_id: str, limit: int = 50) -> list[dict[str, Any]]:
     } for row in rows]
 
 
+def record_worker_telemetry(worker_id: str, telemetry: dict[str, Any], created_at: datetime | None = None) -> dict[str, Any]:
+    stamp = (created_at or datetime.now(timezone.utc)).isoformat()
+    with _LOCK, _CONNECTION:
+        cursor = _CONNECTION.execute(
+            "INSERT INTO worker_telemetry(worker_id, created_at, data_json) VALUES(?, ?, ?)",
+            (worker_id, stamp, json.dumps(telemetry, sort_keys=True)),
+        )
+        return {"telemetry_id": cursor.lastrowid, "worker_id": worker_id, "created_at": stamp, **telemetry}
+
+
+def latest_worker_telemetry(worker_id: str) -> dict[str, Any] | None:
+    with _LOCK:
+        row = _CONNECTION.execute(
+            "SELECT telemetry_id, worker_id, created_at, data_json FROM worker_telemetry WHERE worker_id = ? ORDER BY telemetry_id DESC LIMIT 1",
+            (worker_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {"telemetry_id": row["telemetry_id"], "worker_id": row["worker_id"],
+            "created_at": row["created_at"], **json.loads(row["data_json"])}
+
+
+def list_worker_telemetry(worker_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    with _LOCK:
+        rows = _CONNECTION.execute(
+            "SELECT telemetry_id, worker_id, created_at, data_json FROM worker_telemetry WHERE worker_id = ? ORDER BY telemetry_id DESC LIMIT ?",
+            (worker_id, max(1, min(limit, 200))),
+        ).fetchall()
+    return [{"telemetry_id": row["telemetry_id"], "worker_id": row["worker_id"],
+             "created_at": row["created_at"], **json.loads(row["data_json"])} for row in rows]
+
+
 def record_worker_job_event(job_id: str, worker_id: str, event_type: str, attempt: int, created_at: datetime | None = None) -> None:
     if event_type not in {"succeeded", "failed"}:
         raise ValueError("Unsupported worker job event type")
@@ -188,6 +229,7 @@ def clear_all() -> None:
         _CONNECTION.execute("DELETE FROM worker_tokens")
         _CONNECTION.execute("DELETE FROM worker_job_events")
         _CONNECTION.execute("DELETE FROM gpu_events")
+        _CONNECTION.execute("DELETE FROM worker_telemetry")
         _CONNECTION.execute("DELETE FROM worker_approval_events")
         _CONNECTION.execute("DELETE FROM jobs")
         _CONNECTION.execute("DELETE FROM workers")
