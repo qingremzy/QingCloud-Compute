@@ -36,7 +36,7 @@ init_db()
 load_state(workers, jobs, worker_token_hashes)
 # Recover expired persisted leases immediately after restart so stale GPU
 # reservations are released before the coordinator accepts new work.
-recover_expired_jobs_persisted(jobs, now())
+recover_expired_jobs_persisted(jobs, datetime.now(timezone.utc))
 # A worker cannot be assumed alive after the control plane restarts.
 for _worker in workers.values():
     _worker.state = WorkerState.offline
