@@ -8,7 +8,7 @@ from fastapi import FastAPI, Header, HTTPException
 from qingcloud.db import init_db, load_state, save_job, save_worker, save_worker_token
 from qingcloud.models import (
     JobCompletion, JobCreate, JobHeartbeat, JobRecord,
-    WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration,
+    WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration, WorkerState,
 )
 from qingcloud.scheduler import claim_next_job
 from qingcloud.security import (
@@ -30,7 +30,7 @@ init_db()
 load_state(workers, jobs, worker_token_hashes)
 # A worker cannot be assumed alive after the control plane restarts.
 for _worker in workers.values():
-    _worker.state = "offline"
+    _worker.state = WorkerState.offline
     save_worker(_worker)
 
 
@@ -95,7 +95,7 @@ def worker_heartbeat(
 ):
     worker = authenticate_worker(worker_id, token)
     worker.last_seen_at = now()
-    worker.state = "online"
+    worker.state = WorkerState.online
     save_worker(worker)
     return {"ok": True, "last_seen_at": worker.last_seen_at}
 
@@ -108,8 +108,9 @@ def update_worker_capabilities(
 ):
     """Refresh a worker's self-reported hardware inventory using its own token."""
     worker = authenticate_worker(worker_id, token)
-    for field, value in data.model_dump().items():
-        setattr(worker, field, value)
+    normalized = WorkerRegistration.model_validate(data.model_dump())
+    for field in WorkerRegistration.model_fields:
+        setattr(worker, field, getattr(normalized, field))
     worker.last_seen_at = now()
     worker.state = "online"
     save_worker(worker)
