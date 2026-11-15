@@ -109,7 +109,7 @@ SQLite persistence is local to the machine running the control plane. It does no
 - [x] Basic retry limits and expired-worker lease recovery\n- [x] In-process claim locking to prevent duplicate claims within one API process\n- [ ] Durable queue with database-level transactional claiming across multiple API processes
 - [x] Worker agent for hardware discovery and authenticated heartbeat (no job execution)
 - [x] Opt-in worker runtime for bounded built-in diagnostic jobs
-- [ ] Secure, sandboxed worker runtime for third-party workloads
+- [ ] Secure, sandboxed worker runtime for third-party workloads\n- [x] Declared per-job CPU-core and RAM requirements with telemetry-aware eligibility checks
 - [x] Initial NVIDIA GPU capability probing and authenticated inventory refresh\n- [x] NVIDIA free-VRAM and utilization telemetry with free-memory-aware scheduling
 - [x] GPU provider health assessment in admin dashboard API
 - [x] Persistent GPU hardware inventory change history
@@ -156,3 +156,7 @@ The worker agent samples host CPU utilization and RAM total, used, available, an
 ### Resource-aware scheduling
 
 When a worker has a resource telemetry sample no older than 120 seconds, scheduling adds live CPU utilization and available RAM to its suitability score. CPU pressure and RAM headroom influence both CPU and GPU job ranking, alongside existing reliability, concurrency, GPU free-memory, utilization, and reservation checks. Missing, malformed, or stale samples receive a neutral resource score rather than being treated as current. These scores are heuristics based on self-reported telemetry and do not guarantee workload fit or enforce CPU/RAM limits.
+
+### Declared CPU and RAM workload requirements
+
+Job submissions can declare `required_cpu_cores` (0–256) and `required_ram_mb` (0–1,048,576). Zero preserves the backward-compatible unspecified requirement. Workers must report enough total CPU cores and RAM to meet the request. When a worker has a resource telemetry sample no older than 120 seconds, the scheduler also requires its reported currently available RAM to meet the job's RAM requirement. Stale or missing RAM samples fall back to reported total RAM. These are admission checks based on self-reported values, not reservations or OS-enforced isolation. Concurrent jobs can still compete for CPU and RAM, and the worker runtime remains limited to its allowlisted built-in tasks.
