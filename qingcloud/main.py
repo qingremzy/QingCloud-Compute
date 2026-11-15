@@ -6,12 +6,12 @@ from threading import RLock
 
 from fastapi import FastAPI, Header, HTTPException
 
-from qingcloud.db import init_db, load_state, save_job, save_worker, save_worker_token
+from qingcloud.db import claim_job_atomic, init_db, load_state, save_job, save_worker, save_worker_token
 from qingcloud.models import (
     DistributedSumCreate, JobCompletion, JobCreate, JobHeartbeat, JobRecord, JobState,
     WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration, WorkerState,
 )
-from qingcloud.scheduler import claim_next_job, recover_expired_jobs
+from qingcloud.scheduler import recover_expired_jobs
 from qingcloud.security import (
     hash_worker_token, issue_worker_token, require_worker_token,
     verify_enrollment_token,
@@ -233,10 +233,8 @@ def worker_claim(
     with claim_lock:
         for recovered_job in recover_expired_jobs(jobs, now()):
             save_job(recovered_job)
-        claimed = claim_next_job(worker, jobs)
+        claimed = claim_job_atomic(worker, jobs)
         save_worker(worker)
-        if claimed:
-            save_job(claimed)
         return claimed
 
 
