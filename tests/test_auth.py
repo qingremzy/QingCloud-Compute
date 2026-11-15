@@ -249,6 +249,8 @@ def test_dashboard_requires_admin_token_and_reports_network_inventory():
     assert body["workers"][0]["running_jobs"] == 0
     assert body["jobs"] == []
     assert "not a unified memory pool" in body["note"]
+    assert body["workers"][0]["gpu_health"]["status"] == "no_gpu"
+    assert "capabilities_updated_at" in body["workers"][0]
 
 
 def test_job_submission_and_inspection_require_admin_token():
