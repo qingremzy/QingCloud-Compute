@@ -110,6 +110,24 @@ def save_job(job: JobRecord) -> None:
         )
 
 
+
+def save_jobs_atomic(jobs: list[JobRecord]) -> None:
+    """Persist a complete distributed task batch in one SQLite transaction.
+
+    Either every chunk is visible to workers after commit, or none is. This
+    prevents coordinator restarts from leaving a task with only some chunks.
+    """
+    if not jobs:
+        return
+    rows = [(job.job_id, job.model_dump_json()) for job in jobs]
+    with _LOCK, _CONNECTION:
+        _CONNECTION.executemany(
+            "INSERT INTO jobs(job_id, data_json) VALUES(?, ?) "
+            "ON CONFLICT(job_id) DO UPDATE SET data_json=excluded.data_json",
+            rows,
+        )
+
+
 def record_gpu_event(worker_id: str, event_type: str, before: list[dict[str, Any]], after: list[dict[str, Any]], created_at: datetime | None = None) -> None:
     stamp = (created_at or datetime.now(timezone.utc)).isoformat()
     with _LOCK, _CONNECTION:
