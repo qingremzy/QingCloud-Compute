@@ -208,3 +208,8 @@ Jobs carry a short `source` label (default `api`) so an integrated application c
 A Dockerfile and Docker Compose configuration are provided for a persistent, non-root coordinator deployment. The compose service binds only to localhost and stores SQLite data in a named volume. See [the self-hosting deployment guide](docs/SELF_HOSTED_DEPLOYMENT.md) for HTTPS reverse-proxy, backup, YTAgent connection, and provider-enrollment steps. The deployment files do not provision a free public host or GPU hardware.
 
 The worker agent advertises the `gpu_execution=cuda_torch` label only when PyTorch reports CUDA available. The bounded `gpu_matrix_multiply` task runs a matrix multiplication on the coordinator-assigned NVIDIA device and returns device name, elapsed time, and checksum. It accepts matrix sizes from 32 through 2048 and requires a non-zero `required_gpu_vram_mb` plus the `gpu_execution=cuda_torch` required label. A worker must have a compatible PyTorch/CUDA environment installed by its owner. This proves only that a CUDA operation can execute on a real provider. It does not run Wan, Kokoro, FFmpeg, arbitrary Python, or YTAgent video generation.
+
+
+## One-click $0 Windows launch
+
+A Windows PowerShell launch kit is available in [`docs/ZERO_COST_QUICKSTART.md`](docs/ZERO_COST_QUICKSTART.md). It installs dependencies, creates private local secrets, starts the coordinator, and provides a separate provider onboarding script. It does not provision paid hosting or expose the coordinator publicly.
