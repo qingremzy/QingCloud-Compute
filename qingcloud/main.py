@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
-from qingcloud.db import claim_job_atomic, init_db, load_state, save_job, save_worker, save_worker_token, record_gpu_event, list_gpu_events, record_worker_job_event, worker_reliability_stats, create_worker_invitation, redeem_worker_invitation, record_worker_approval_event, list_worker_approval_events, recover_expired_jobs_persisted, save_job_if_current_attempt, record_worker_telemetry, latest_worker_telemetry, list_worker_telemetry
+from qingcloud.db import claim_job_atomic, init_db, load_state, save_job, save_jobs_atomic, save_worker, save_worker_token, record_gpu_event, list_gpu_events, record_worker_job_event, worker_reliability_stats, create_worker_invitation, redeem_worker_invitation, record_worker_approval_event, list_worker_approval_events, recover_expired_jobs_persisted, save_job_if_current_attempt, record_worker_telemetry, latest_worker_telemetry, list_worker_telemetry
 from qingcloud.models import (
     DistributedSumCreate, JobCompletion, JobCreate, JobDecline, JobHeartbeat, JobRecord, JobState, WorkerTelemetry,
     WorkerEnrollmentResponse, WorkerRecord, WorkerRegistration, WorkerState, WorkerInvitationCreate, WorkerApprovalUpdate, WorkerApprovalStatus, WorkerCapacityUpdate,
@@ -427,22 +427,24 @@ def create_distributed_sum(
     if total_count > 1_000_000:
         raise HTTPException(status_code=422, detail="A distributed sum is limited to 1,000,000 integers")
     task_id = str(uuid4())
-    chunk_ids = []
+    task_jobs = []
     chunk_start = data.start
     while chunk_start <= data.end:
         chunk_end = min(chunk_start + data.chunk_size - 1, data.end)
-        record = JobRecord(
+        task_jobs.append(JobRecord(
             job_id=str(uuid4()),
             task_id=task_id,
             kind="sum_range",
             payload={"start": chunk_start, "end": chunk_end},
             max_attempts=2,
             source=data.source,
-        )
-        jobs[record.job_id] = record
-        save_job(record)
-        chunk_ids.append(record.job_id)
+        ))
         chunk_start = chunk_end + 1
+
+    # Commit every chunk together before exposing the task in coordinator memory.
+    save_jobs_atomic(task_jobs)
+    jobs.update({job.job_id: job for job in task_jobs})
+    chunk_ids = [job.job_id for job in task_jobs]
     return {
         "task_id": task_id,
         "kind": "distributed_sum",
