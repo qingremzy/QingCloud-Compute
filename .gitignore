@@ -10,3 +10,7 @@ build/
 # Local worker credentials and config
 .qingcloud/
 worker.json
+
+# Local coordinator secrets
+.qingcloud-local-secrets.json
+qingcloud.sqlite3
